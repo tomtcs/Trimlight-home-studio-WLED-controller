@@ -34,8 +34,9 @@
     if (s.mode !== 'wled' || !Array.isArray(s.outputs) || !s.outputs.length) return clone(window.DEMO_DATA.layout);
     const outputs = s.outputs.slice(0, 6);
     let start = 0;
+    const front = s.houseViews?.front || {};
     return {
-      photo: s.photo || 'demo-house.svg', photoSize: s.photoSize || [2000, 1500], nextId: outputs.length + 1,
+      photo: front.photo || s.photo || 'demo-house.svg', photoSize: front.photoSize || s.photoSize || [2000, 1500], nextId: outputs.length + 1,
       settings: { ledSpacing: 20, ledSize: 1.4 },
       runs: outputs.map((o, i) => {
         const leds = Math.max(1, Math.min(10000, Number(o.leds) || 1));
@@ -45,7 +46,16 @@
       })
     };
   }
-  const T = window.TLSettings = { key: KEY, read, write, hostOf, layout: getLayout, isReal: () => read().mode === 'wled' };
+  async function saveSettings(patch) {
+    const next = Object.assign(read(), patch || {});
+    if (window.TL_SERVER_STATE) {
+      const response = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
+      if (!response.ok) { const failure = await response.json().catch(() => ({})); throw new Error(failure.error || `Could not save settings (HTTP ${response.status}).`); }
+    }
+    write(next);
+    return next;
+  }
+  const T = window.TLSettings = { key: KEY, read, write, saveSettings, hostOf, layout: getLayout, isReal: () => read().mode === 'wled' };
   function initUI() {
   const mode = document.getElementById('wledMode'), addr = document.getElementById('wledAddress'), channelCount = document.getElementById('wledChannelCount'), lat = document.getElementById('wledLatitude'), lon = document.getElementById('wledLongitude'), rows = document.getElementById('wledOutputs'), result = document.getElementById('wledStatus');
     if (!mode || !addr || !channelCount || !rows || !result) return;
@@ -60,7 +70,7 @@
       <label>Channel name<input data-name value="${esc(o.name || DEFAULT_NAMES[i] || `Output ${i + 1}`)}" maxlength="24"></label>
       <label>GPIO pin<input data-pin value="${esc(Array.isArray(o.pin) ? o.pin.join(', ') : o.pin ?? '')}" readonly aria-label="WLED output pin"></label>
       <label>LEDs on channel<input data-leds type="number" min="1" max="10000" step="1" value="${Math.max(1, Number(o.leds) || 1)}" required></label>
-      <label>Roofline mapping<button type="button" class="map-run" data-trace>${o.points?.length >= 2 ? 'Edit traced line' : 'Trace roofline'}</button><small data-mapstat>${o.points?.length >= 2 ? `${o.points.length} points mapped` : 'Using preview route'}</small></label>
+      <label>Roofline mapping<small>${o.points?.length >= 2 ? `${o.points.length} legacy points · use the house mapper below for elevations` : 'Use the house mapper below to trace elevations'}</small></label>
       <label>Color order<select data-order>${orders.map(x => `<option${x === order ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
     </div>`;
   };
@@ -220,7 +230,8 @@
         if (cfg.if.ntp.lt !== latitude || cfg.if.ntp.ln !== longitude) changed = true;
         cfg.if.ntp.lt = latitude; cfg.if.ntp.ln = longitude;
       }
-      const next = { mode: 'wled', host, channelCount: selectedChannels, outputs, lat: latitude, lon: longitude, photo: savedPhoto, photoSize };
+      const saved = read();
+      const next = { ...saved, mode: 'wled', host, channelCount: selectedChannels, outputs, lat: latitude, lon: longitude, photo: saved.photo || '', photoSize: saved.photoSize || [2000, 1500], houseViews: saved.houseViews || {} };
       if (changed) {
         setStatus('Applying channel counts and color order to WLED…');
         const res = await fetch(`http://${host}/json/cfg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
