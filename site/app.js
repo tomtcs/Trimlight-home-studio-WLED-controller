@@ -1,10 +1,9 @@
-/* Trimlight Home Studio · WLED Edition — WLED look library and editor running in demo mode.
-   The shipped demo shim simulates controller, API, and WebSocket responses; physical lights are not controlled. */
+/* Trimlight Home Studio · WLED Edition — WLED look library and editor with demo and direct-controller modes. */
 (function () {
   'use strict';
   const $ = id => document.getElementById(id);
   const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const W = 2000, H = 1500;                                   // plate size; mapper coords are normalized to it
+  const W = 2000;                                               // plate width; roof-map coordinates are normalized
   const CAT = window.TLCatalog, FXL = window.TLFX || null, TLB = window.TLBuilder;
   const isStack = P => !!(TLB && TLB.isStack(P));   // a Look Builder stack (builder.js)
   // Select the effect catalog according to the WLED compatibility version exposed by the engine.
@@ -20,6 +19,7 @@
 
   /* ---------------- house geometry: LEDs in WLED order (port 1 → 2 → 3, runs in data order) ---------------- */
   const layout = getSync('/api/layout');
+  const photoSize = layout.photoSize || [2000, 1500], H = W * (Number(photoSize[1]) / Number(photoSize[0]) || .75);
   const LEDS = [];
   (layout.runs || []).slice().map((r, k) => ({ r, k })).sort((a, b) => (a.r.port - b.r.port) || (a.k - b.k)).forEach(({ r }, ri) => {
     const pts = r.points.map(p => [p[0] * W, p[1] * H]), seg = []; let tot = 0;
@@ -349,7 +349,7 @@
   /* ---------------- canvas house renderer (approved mockup look) ---------------- */
   const plateImg = new Image(); let plateReady = false; const allViews = [];
   plateImg.onload = () => { plateReady = true; allViews.forEach(v => { v.plate = null; v.dirty = true; }); };
-  plateImg.src = 'demo-house.svg';
+  plateImg.src = layout.photo?.startsWith('data:image/') ? layout.photo : 'demo-house.svg';
   const CROP_CARD = { x: 0.0, y: 0.11, w: 0.82, h: 0.80 }, CROP_STAGE = { x: 0.0, y: 0.12, w: 0.82, h: 0.76 }, CROP_FULL = { x: 0.0, y: 0.14, w: 1, h: 0.74 };
   const DPR = Math.min(2, devicePixelRatio || 1);
   function makeView(canvas, crop, size, dprCap) {
