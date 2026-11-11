@@ -243,6 +243,8 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .master .mreset{margin-left:auto;border:1px solid rgba(71,94,77,.4);background:none;color:#98a79d;border-radius:10px;padding:6px 10px;font:600 12px Inter,sans-serif;cursor:pointer}
 .master .mreset:hover{color:#f4f7f5}
 .master.active{border-color:rgba(98,214,130,.45)}
+.master .preview-toggle{border:1px solid rgba(98,214,130,.32);background:#17241b;color:#b9f4c9;border-radius:10px;padding:7px 10px;font:600 12px Inter,system-ui,sans-serif;cursor:pointer;white-space:nowrap}
+.master .preview-toggle[aria-pressed="false"]{border-color:rgba(71,94,77,.45);background:#1b231e;color:#98a79d}
 #themePop{position:fixed;z-index:200;width:380px;max-height:470px;overflow-y:auto;background:rgba(11,17,32,.97);backdrop-filter:blur(16px);border:1px solid rgba(71,94,77,.45);border-radius:16px;padding:12px;box-shadow:0 24px 60px rgba(0,0,0,.6);display:none}
 #themePop.on{display:block}
 #themePop .thm-h{display:flex;justify-content:space-between;align-items:center;margin:2px 4px 8px}
@@ -343,6 +345,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
       <label class="mc">Brightness <input type="range" id="mBright" min="20" max="150" step="5"><output id="mBrightO"></output></label>
       <span class="mc">Bulbs <span class="sg" id="mSpacing"><button data-s="0">Own</button><button data-s="1">All</button><button data-s="2">2nd</button><button data-s="3">3rd</button></span></span>
       <label class="mc">Colors <select id="mTheme"></select></label>
+      <button class="preview-toggle" id="previewToggle" type="button" aria-pressed="true" title="Pause animated look thumbnails and freeze the live preview">⏸ Pause previews</button>
       <button class="mreset" id="mReset">Reset</button>
     </div>
     <div class="scroller" id="scroller"><div id="groups"></div></div>
