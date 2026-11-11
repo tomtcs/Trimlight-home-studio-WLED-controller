@@ -123,6 +123,20 @@
         return json(APPSTATE);
       }
       if (u === '/api/settings') return realFetch(url, opt);
+      if (u === '/api/restore') {
+        if (SERVER) {
+          const response = await realFetch(url, opt);
+          if (response.ok) { const backup = parsed(); SERVER.app = backup.application; SERVER.settings = backup.controller; SERVER.has_app = SERVER.has_settings = true; }
+          return response;
+        }
+        if (m === 'POST') {
+          const backup = parsed();
+          if (backup.format !== 'trimlight-home-studio-wled-backup' || backup.version !== 1 || !backup.application || !backup.controller) return json({ ok: false, error: 'This is not a supported Trimlight Home Studio WLED backup.' }, 400);
+          for (const key of Object.keys(APPSTATE)) delete APPSTATE[key]; Object.assign(APPSTATE, backup.application); store(APPSTATE);
+          try { localStorage.setItem('trimlight-home-studio-wled-v1', JSON.stringify(backup.controller)); } catch { }
+          return json({ ok: true });
+        }
+      }
       if (u === '/api/wled/status') return json({ host: REAL ? (PREFS.outputs?.length ? PREFS.host : null) : HOST, mode: REAL ? 'wled' : 'demo' });
       if (u === '/api/fxinfo') return json(D.fxinfo);
       if (u === '/api/layout') return json(LAYOUT);
