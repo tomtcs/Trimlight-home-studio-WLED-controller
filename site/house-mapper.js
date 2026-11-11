@@ -23,7 +23,7 @@
       busy = true; render();
       try {
         const s = currentSettings(), legacyView = views.front || Object.values(views)[0] || {};
-        await window.TLSettings.saveSettings({ houseSides: sides, houseViews: views, photo: legacyView.photo || '', photoSize: legacyView.photoSize || [2000, 1500] });
+        await window.TLSettings.saveSettings({ houseSides: sides, houseViews: views, previewSide: side, photo: legacyView.photo || '', photoSize: legacyView.photoSize || [2000, 1500] });
         status(message || 'House layout saved to the persistent studio settings.');
       } catch (error) { status(`Could not save house layout: ${error.message || error}`); }
       finally { busy = false; render(); }
