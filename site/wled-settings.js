@@ -10,9 +10,17 @@
   const DEFAULT_NAMES = ['Front gable', 'Main eave', 'Garage edge', 'Lower eave', 'Porch line', 'Side eave'];
   const clone = x => JSON.parse(JSON.stringify(x));
   const read = () => {
-    if (window.TL_SERVER_STATE?.has_settings) return Object.assign({ mode: 'demo', host: '', outputs: [] }, window.TL_SERVER_STATE.settings || {});
-    try { return Object.assign({ mode: 'demo', host: '', outputs: [] }, JSON.parse(localStorage.getItem(KEY) || '{}')); }
-    catch { return { mode: 'demo', host: '', outputs: [] }; }
+    let value;
+    if (window.TL_SERVER_STATE?.has_settings) value = Object.assign({ mode: 'demo', host: '', outputs: [] }, window.TL_SERVER_STATE.settings || {});
+    else { try { value = Object.assign({ mode: 'demo', host: '', outputs: [] }, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch { value = { mode: 'demo', host: '', outputs: [] }; } }
+    if (!Array.isArray(value.outputs)) value.outputs = [];
+    if ([2, 4, 6].includes(Number(value.channelCount))) value.channelCount = Number(value.channelCount);
+    else {
+      const populated = value.outputs.length;
+      value.channelCount = populated === 0 ? 4 : populated <= 2 ? 2 : populated <= 4 ? 4 : 6;
+    }
+    if (value.outputs.length > Number(value.channelCount)) value.channelCount = value.outputs.length <= 4 ? 4 : 6;
+    return value;
   };
   const write = x => {
     if (window.TL_SERVER_STATE) { window.TL_SERVER_STATE.settings = x; window.TL_SERVER_STATE.has_settings = true; return; }
@@ -60,8 +68,7 @@
   const mode = document.getElementById('wledMode'), addr = document.getElementById('wledAddress'), channelCount = document.getElementById('wledChannelCount'), lat = document.getElementById('wledLatitude'), lon = document.getElementById('wledLongitude'), rows = document.getElementById('wledOutputs'), result = document.getElementById('wledStatus');
     if (!mode || !addr || !channelCount || !rows || !result) return;
   const setStatus = (message, bad = false) => { result.textContent = message; result.classList.toggle('bad', bad); };
-  let channelTouched = false;
-  channelCount.addEventListener('change', () => { channelTouched = true; const detected = rows.querySelectorAll('.wled-output').length; if (detected && detected !== Number(channelCount.value)) setStatus(`Selected ${channelCount.value} channels, but WLED currently reports ${detected} configured outputs. Configure the missing outputs and GPIO pins in WLED, then test again.`, true); });
+  channelCount.addEventListener('change', () => { const detected = rows.querySelectorAll('.wled-output').length; if (detected > Number(channelCount.value)) setStatus(`${detected} configured outputs exceed the selected ${channelCount.value}-channel capacity. Remove unused rows or select a larger controller.`, true); else setStatus(`${detected} output${detected === 1 ? '' : 's'} configured within the ${channelCount.value}-channel capacity.`); });
   const htmlRow = (o, i) => {
     const order = String(o.order || 'GRB');
     const orders = ['RGB', 'RBG', 'GRB', 'GBR', 'BRG', 'BGR'];
@@ -72,9 +79,15 @@
       <label>LEDs on channel<input data-leds type="number" min="1" max="10000" step="1" value="${Math.max(1, Number(o.leds) || 1)}" required></label>
       <label>Roofline mapping<small>${o.points?.length >= 2 ? `${o.points.length} legacy points · use the house mapper below for elevations` : 'Use the house mapper below to trace elevations'}</small></label>
       <label>Color order<select data-order>${orders.map(x => `<option${x === order ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
+      ${mode.value === 'demo' ? `<button type="button" class="hm-small danger" data-remove-demo="${i}">Remove channel</button>` : ''}
     </div>`;
   };
   function drawRows(outputs) { rows.innerHTML = outputs.map(htmlRow).join(''); }
+  rows.addEventListener('click', event => {
+    const remove = event.target.closest('[data-remove-demo]'); if (!remove || mode.value !== 'demo') return;
+    const outputs = readRows(); outputs.splice(Number(remove.dataset.removeDemo), 1); drawRows(outputs);
+    setStatus(`${outputs.length} of ${channelCount.value} channel slots populated. Save demo settings to keep this setup.`);
+  });
   function readRows() {
     return [...rows.querySelectorAll('.wled-output')].map((r, i) => ({
       name: r.querySelector('[data-name]').value.trim() || DEFAULT_NAMES[i] || `Output ${i + 1}`,
@@ -160,17 +173,21 @@
     if (s.outputs?.length) drawRows(s.outputs);
     else if (s.mode === 'demo') drawRows(window.DEMO_DATA.layout.runs.map((r, i) => ({ name: r.name, leds: r.leds, pin: '', order: 'GRB' })));
     else drawRows([]);
-    document.getElementById('applyWled').disabled = s.mode !== 'wled';
+    document.getElementById('applyWled').disabled = s.mode === 'wled';
     document.getElementById('demoReset').hidden = s.mode === 'wled';
+    document.getElementById('addDemoOutput').hidden = s.mode === 'wled';
+    document.getElementById('applyWled').textContent = s.mode === 'wled' ? 'Apply settings & connect' : 'Save demo setup';
     const banner = document.getElementById('modeBanner');
     if (banner) banner.innerHTML = s.mode === 'wled' ? '<b>WLED</b><span>Controller mode · settings saved with this installation</span>' : '<b>DEMO</b><span>A simulated controller · no physical lights are controlled</span>';
   }
   mode.addEventListener('change', () => {
     const s = read();
     if (mode.value === 'wled' && s.mode !== 'wled') drawRows([]);
-    if (mode.value === 'demo' && !rows.children.length) drawRows(window.DEMO_DATA.layout.runs.map(r => ({ name: r.name, leds: r.leds, order: 'GRB' })));
-    document.getElementById('applyWled').disabled = mode.value !== 'wled';
+    if (mode.value === 'demo') drawRows(rows.children.length ? readRows() : window.DEMO_DATA.layout.runs.map(r => ({ name: r.name, leds: r.leds, order: 'GRB' })));
+    document.getElementById('applyWled').disabled = mode.value === 'wled';
     document.getElementById('demoReset').hidden = mode.value === 'wled';
+    document.getElementById('addDemoOutput').hidden = mode.value !== 'demo';
+    document.getElementById('applyWled').textContent = mode.value === 'wled' ? 'Apply settings & connect' : 'Save demo setup';
   });
   document.getElementById('testWled').addEventListener('click', async () => {
     let host;
@@ -189,11 +206,10 @@
       if (ins.length > 6) throw new Error(`WLED reports ${ins.length} outputs; this setup supports 2, 4, or 6 channels.`);
       const previous = readRows();
       drawRows(ins.map((x, i) => ({ name: previous[i]?.name || DEFAULT_NAMES[i] || `Output ${i + 1}`, pin: x.pin, leds: x.len, order: x.order || 'GRB', points: previous[i]?.points || [], reverse: previous[i]?.reverse })));
-      if (!channelTouched && [2, 4, 6].includes(ins.length)) channelCount.value = String(ins.length);
       if (cfg.if?.ntp) { lat.value = cfg.if.ntp.lt ?? ''; lon.value = cfg.if.ntp.ln ?? ''; }
       mode.value = 'wled'; document.getElementById('applyWled').disabled = false;
-      const selected = Number(channelCount.value), mismatch = selected !== ins.length;
-      setStatus(`${info.name || 'WLED controller'} connected · ${info.leds?.count ?? cfg.hw.led.total ?? '?'} LEDs · WLED reports ${ins.length} configured outputs; ${selected} selected.${mismatch ? ' Configure the missing outputs and GPIO pins in WLED before applying.' : ' Review the per-channel counts, then apply and connect.'}`, mismatch);
+      const selected = Number(channelCount.value), mismatch = ins.length > selected;
+      setStatus(`${info.name || 'WLED controller'} connected · ${info.leds?.count ?? cfg.hw.led.total ?? '?'} LEDs · WLED reports ${ins.length} configured outputs; ${selected} channel capacity.${mismatch ? ' Select a larger controller capacity.' : ' Review the per-channel counts, then apply and connect.'}`, mismatch);
       window.__TLWLED_TEST = { host, info, cfg };
     } catch (e) {
       const message = e.name === 'AbortError' ? 'Connection timed out. Check the address and confirm this page is open over HTTP on the same LAN.' : `Could not connect: ${e.message || 'check the address, network, and WLED API access.'}`;
@@ -203,16 +219,26 @@
   document.getElementById('applyWled').addEventListener('click', async () => {
     let host, outputs;
     try {
-      host = hostOf(addr.value); outputs = readRows();
+      const isDemo = mode.value === 'demo';
+      host = isDemo ? '' : hostOf(addr.value); outputs = readRows();
       const selectedChannels = Number(channelCount.value);
       if (![2, 4, 6].includes(selectedChannels)) throw new Error('Select a 2-, 4-, or 6-channel controller.');
-      if (outputs.length !== selectedChannels) throw new Error(`You selected ${selectedChannels} channels, but WLED reports ${outputs.length} configured outputs. Configure all output entries and GPIO pins in WLED, then test again.`);
+      if (outputs.length > selectedChannels) throw new Error(`${outputs.length} configured outputs exceed the selected ${selectedChannels}-channel capacity. Remove unused rows or select a larger controller.`);
       const latitude = lat.value.trim() === '' ? null : Number(lat.value), longitude = lon.value.trim() === '' ? null : Number(lon.value);
       if ((latitude === null) !== (longitude === null)) throw new Error('Enter both latitude and longitude, or leave both blank to keep the WLED location.');
       if (latitude !== null && (!Number.isFinite(latitude) || latitude < -66.6 || latitude > 66.6 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180)) throw new Error('Enter a valid latitude (-66.6 to 66.6) and longitude (-180 to 180).');
       const total = outputs.reduce((n, o) => n + o.leds, 0);
       if (outputs.some(o => !Number.isInteger(o.leds) || o.leds < 1 || o.leds > 10000) || total > 10000) throw new Error('Enter a whole-number LED count from 1 to 10,000 per channel; the total must not exceed 10,000.');
     } catch (e) { return setStatus(e.message, true); }
+    if (mode.value === 'demo') {
+      try {
+        const saved = read();
+        const next = { ...saved, mode: 'demo', host: '', channelCount: Number(channelCount.value), outputs, lat: null, lon: null };
+        await saveSettings(next);
+        setStatus(`Demo setup saved · ${outputs.length} output${outputs.length === 1 ? '' : 's'} configured within the ${next.channelCount}-channel capacity. House photos and traces are saved with this setup.`);
+      } catch (e) { setStatus(`Could not save demo settings: ${e.message || e}`, true); }
+      return;
+    }
     setStatus('Reading the current WLED configuration…');
     try {
       const cfgRes = await fetch(`http://${host}/json/cfg`, { cache: 'no-store' });
@@ -253,6 +279,13 @@
       if (!saved.ok) return setStatus('Could not save demo mode to the server.', true);
     }
     write(next); location.reload();
+  });
+  document.getElementById('addDemoOutput')?.addEventListener('click', () => {
+    if (mode.value !== 'demo') return;
+    const outputs = readRows(), capacity = Number(channelCount.value);
+    if (outputs.length >= capacity) return setStatus(`All ${capacity} channel slots are already populated.`, true);
+    outputs.push({ name: DEFAULT_NAMES[outputs.length] || `Output ${outputs.length + 1}`, leds: 100, order: 'GRB', pin: '', points: [] });
+    drawRows(outputs); setStatus(`${outputs.length} of ${capacity} channel slots populated. Save demo settings to keep this setup.`);
   });
   loadForm(); drawMap();
   if (window.TL_SERVER_STATE && !window.TL_SERVER_STATE.has_settings) {
