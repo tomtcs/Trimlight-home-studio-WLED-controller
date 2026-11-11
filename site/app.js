@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 42022)
-Total output lines: 1750
-
 /* Trimlight Home Studio · WLED Edition — WLED look library and editor with demo and direct-controller modes. */
 (function () {
   'use strict';
@@ -613,7 +610,664 @@ Total output lines: 1750
     ['gallery', 'edit', 'schedule', 'sections', 'playlists', 'controller', 'builder', 'simple'].forEach(x => $(x).classList.toggle('hidden', r !== x));
     if (r !== 'builder' && TLB) TLB.close();
     if (r !== 'simple' && window.TLSimple) TLSimple.close();
-    if (instant) { void document.body.offsetWidth; document.body.classLi…17022 tokens truncated… = ((h * 60 + bm) - 720 + 1440) % 1440; if (t > bed && t < end) reapply.push({ en: 1, hour: h, min: bm, macro: PS_NIGHT, dow: 127 }); }
+    if (instant) { void document.body.offsetWidth; document.body.classList.remove('noanim'); }
+    requestAnimationFrame(() => { vStage.resize(); vMini.resize(); });
+  }
+  function flyGhost(src) {
+    const a = src.getBoundingClientRect(), b = $('stage').getBoundingClientRect(), g = document.createElement('canvas'); g.className = 'ghost';
+    g.width = src.width; g.height = src.height; try { g.getContext('2d').drawImage(src, 0, 0); } catch { return; }
+    Object.assign(g.style, { left: b.left + 'px', top: b.top + 'px', width: b.width + 'px', height: b.height + 'px' }); document.body.appendChild(g);
+    g.animate([{ transform: `translate(${a.left - b.left}px,${a.top - b.top}px) scale(${a.width / b.width},${a.height / b.height})`, opacity: 1, borderRadius: '16px' }, { transform: 'none', opacity: 1, offset: 0.8, borderRadius: '18px' }, { transform: 'none', opacity: 0, borderRadius: '18px' }], { duration: 560, easing: 'cubic-bezier(.2,.8,.2,1)' }).onfinish = () => g.remove();
+  }
+  function leaveEdit(instant) {
+    if (state.full) setFull(false); showRoute('gallery', instant); $('scroller').scrollTop = state.scrollMem;
+    if (state.edit) { const c = $('groups').querySelector('.card[data-id="' + state.edit.id + '"]'); if (c) { c.classList.add('flash'); setTimeout(() => c.classList.remove('flash'), 1200); } }
+    cardViews.forEach(c => c.v.dirty = true);
+  }
+  function route(instant) { const h = location.hash.replace(/^#/, ''); if (h === 'schedule') { if (state.route !== 'schedule') openSchedule(); return; } const sm = h.match(/^sections(?:=([\w-]+))?$/); if (sm) { openSections(sm[1]); return; } const bm = h.match(/^builder(?:=([\w-]+))?$/); if (bm) { openBuilder(bm[1]); return; } const mk = h.match(/^make(?:=([\w-]+))?$/); if (mk) { openSimple(mk[1]); return; } if (h === 'playlists') { if (state.route !== 'playlists') openPlaylists(); return; } if (h === 'controller') { if (state.route !== 'controller') openController(); return; } const m = h.match(/^edit=([\w-]+)/); if (m && BY_ID[m[1]]) return enterEdit(m[1], instant); if (state.route !== 'gallery') leaveEdit(instant); }
+  addEventListener('hashchange', () => route(false)); $('backBtn').addEventListener('click', goLibrary);
+  $('toBuilderBtn').addEventListener('click', () => { if (state.edit) location.hash = 'builder=' + state.edit.id; });
+
+  /* ---------- controls: per-look names, WLED's own sliders, colours, palette, spacing, brightness ---------- */
+  const SL = ['sx', 'ix', 'c1', 'c2', 'c3'], SLD = ['Speed', 'Intensity', 'Custom 1', 'Custom 2', 'Custom 3'], COLD = ['Main', 'Background', 'Accent'];
+  // speed slider: a curve that gives the slow end most of the travel (half way = speed 48 of 255, not 128)
+  const SPEED_EXP = 2.4, spToPos = v => Math.round(1000 * Math.pow(clamp(v, 0, 255) / 255, 1 / SPEED_EXP)), posToSp = p => clamp(Math.round(255 * Math.pow(clamp(p, 0, 1000) / 1000, SPEED_EXP)), 0, 255);
+  const speedWord = v => v === 0 ? 'slowest (0)' : v + ' / 255';
+  const rangeFill = el => el.style.setProperty('--v', ((el.value - el.min) / (el.max - el.min) * 100) + '%');
+  const pct = v => Math.round(v / 2.55) + '%';
+  function controlDefs(look) {
+    const P = state.edit.P, m = fxMeta(P.fx), lab = look.labels || {}, defs = [];
+    if (!P.pattern) {
+      SL.forEach((k, i) => { const name = k in lab ? lab[k] : (m.sl[i] ? (m.sl[i] === '!' ? SLD[i] : m.sl[i]) : ''); if (name) defs.push({ k, type: 'range', label: name, min: 0, max: 255, word: pct }); });
+      ['o1', 'o2', 'o3'].forEach((k, i) => { const name = k in lab ? lab[k] : (m.sl[5 + i] || ''); if (name) defs.push({ k, type: 'check', label: name }); });
+    }
+    if (P.cmode === 'bulb') defs.push({ k: 'seq', type: 'bulbs', label: 'Colors' });
+    else if (P.mycol) defs.push({ k: 'colors', type: 'swatches', label: 'Colors' });
+    else if (m.colors.some(Boolean) || m.pal) defs.push({ k: 'col', type: 'colors', label: 'Colors', n: Math.min(3, m.colors.filter(Boolean).length || 3), names: m.colors });
+    if (m.pal && !P.mycol && P.cmode !== 'bulb') defs.push({ k: 'pal', type: 'palette', label: 'Palette' });
+    if (!STILL_FX.has(P.fx)) defs.push({ k: 'slow', type: 'slow', label: 'Slow motion' }, { k: 'dir', type: 'dir', label: 'Direction' });
+    defs.push({ k: 'spc', type: 'seg', label: 'Bulbs', opts: [[0, 'Every bulb'], [1, 'Every 2nd'], [2, 'Every 3rd']] });
+    defs.push({ k: 'bri', type: 'range', label: 'Brightness', min: 5, max: 255, word: pct });
+    return defs;
+  }
+  const STILL_FX = new Set([0, 2, 12, 83, 84, 98]);   // effects with no along-the-roof motion: no Direction control
+  const DIRS = [['n', 'Normal', 'forward', 'M4 9h80m-8-6 8 6-8 6'], ['r', 'Reverse', 'backward', 'M92 9H12m8-6-8 6 8 6'], ['m', 'Mirror', 'out from the middle', 'M48 9H8m8-6-8 6 8 6M48 9h40m-8-6 8 6-8 6']];
+  const SLOWS = [[1, 'Normal'], [2, '½×'], [4, '¼×'], [8, '⅛×'], [16, '1/16×']];
+  const dirOf = P => P.mi ? 'm' : P.rev ? 'r' : 'n';
+  const PAL_USE = [0, 2, 3, 4, 5, 6, 8, 9, 10, 11, 13, 14, 20, 21, 26, 27, 35, 36, 39, 40, 46, 49, 50, 51, 55, 56, 57];
+  function renderControls() {
+    const look = BY_ID[state.edit.id], P = state.edit.P, defs = controlDefs(look);
+    state.edit.defs = defs;
+    let html = defs.map((c, i) => {
+      let body = '', word = '';
+      if (c.type === 'range' && c.k === 'sx') { body = '<div class="spdrow"><button class="nudge" data-nudge="-1" data-i="' + i + '" title="A touch slower" aria-label="Slower">−</button><input type="range" data-i="' + i + '" data-curve="1" min="0" max="1000" value="' + spToPos(P.sx) + '"><button class="nudge" data-nudge="1" data-i="' + i + '" title="A touch faster" aria-label="Faster">+</button></div>'; word = speedWord(P.sx); }
+      else if (c.type === 'range') { body = '<input type="range" data-i="' + i + '" min="' + c.min + '" max="' + c.max + '" value="' + P[c.k] + '">'; word = rangeWord(c, P[c.k]); }
+      else if (c.type === 'check') body = '<label class="chk"><input type="checkbox" data-i="' + i + '"' + (P[c.k] ? ' checked' : '') + '> ' + esc(c.label) + '</label>';
+      else if (c.type === 'seg') { const g = gapOf(P); body = '<div class="segrow"><div class="seg">' + c.opts.map(o => { let d = ''; for (let j = 0; j < 6; j++) d += '<i class="' + (j % (o[0] + 1) ? 'off' : '') + '"></i>'; return '<button data-i="' + i + '" data-v="' + o[0] + '" class="' + (g === o[0] ? 'on' : '') + '"><span class="dots">' + d + '</span>' + o[1] + '</button>'; }).join('') + '</div><label class="gapbox" title="Dark bulbs between lit ones' + (P.cmode === 'bulb' ? ' (added after each color in your pattern)' : '') + '">Gap<input type="number" min="0" max="9" step="1" data-gap value="' + (g < 0 ? '' : g) + '" placeholder="mix"></label></div>'; word = g < 0 ? 'custom gaps' : g === 0 ? 'every bulb' : g + ' dark between'; }
+      else if (c.type === 'palette') { body = '<div class="palsel">' + PAL_USE.map(id => '<button data-i="' + i + '" data-v="' + id + '" class="' + (P.pal === id ? 'on' : '') + '"><i style="background:' + (FXL ? FXL.paletteCss(id, P.col) : '#333') + '"></i><span>' + esc(WL.palettes[id] || 'Palette ' + id) + '</span></button>').join('') + '</div>'; word = WL.palettes[P.pal] || ''; }
+      else if (c.type === 'colors') {   // fixed colour roles (e.g. candle flame + background)
+        const COLN = ['Main', 'Background', 'Accent'];
+        body = '<div class="colors">' + P.col.slice(0, c.n).map((col, j) => { const lk = state.edit.locks[j], nm = c.names && c.names[j] && c.names[j] !== '!' ? c.names[j] : COLN[j]; return '<label title="' + esc(nm) + '"><span style="background:' + hex(col) + ';box-shadow:inset 0 0 18px rgba(0,0,0,.35)"></span><em>' + esc(nm) + '</em><input type="color" data-i="' + i + '" data-j="' + j + '" value="' + hex(col) + '"><button class="lk' + (lk ? ' on' : '') + '" data-lock="' + j + '">' + (lk ? '🔒' : '🔓') + '</button></label>'; }).join('') + '</div>' + CTOOLS +
+          (usesPal(P.fx) ? '<button class="linkbtn" data-act="mycol">Use my own colors (reorder, add more, per bulb) →</button>' : '');
+        if (P.pal >= 6) word = 'palette in use';
+      }
+      else if (c.type === 'slow') { const v = P.slow || 1; body = '<div class="seg slowsel">' + SLOWS.map(([f, t]) => '<button data-slow="' + f + '" class="' + (v === f ? 'on' : '') + '">' + t + '</button>').join('') + '</div><p class="cnote">Slows the whole animation, fades included, below what the speed slider can reach. Stays smooth.</p>'; word = v === 1 ? 'off' : SLOWS.find(o => o[0] === v)[1] + ' speed'; }
+      else if (c.type === 'dir') { const d = dirOf(P); body = '<div class="dirsel">' + DIRS.map(o => '<button data-dir="' + o[0] + '" class="' + (d === o[0] ? 'on' : '') + '"><svg width="96" height="18" viewBox="0 0 96 18"><path d="' + o[3] + '" stroke="currentColor" stroke-width="2" fill="none"/></svg><b>' + o[1] + '</b><small>' + o[2] + '</small></button>').join('') + '</div>'; word = DIRS.find(o => o[0] === d)[1]; }
+      else if (c.type === 'swatches') { body = swatchesHTML(P); word = P.colors.length + ' color' + (P.colors.length === 1 ? '' : 's'); }
+      else if (c.type === 'bulbs') { body = bulbsHTML(P); const L = P.seq.reduce((a, e) => a + e.n, 0) || 1; word = L + '-bulb pattern · repeats ~' + Math.round(N / L) + '×'; }
+      return '<div class="ctl"><div class="cl"><label>' + (c.type === 'check' ? '' : esc(c.label)) + '</label><span class="val" id="val' + i + '">' + esc(word) + '</span></div>' + body + '</div>';
+    }).join('');
+    html += '<button class="reset" id="resetBtn">Reset to the original ' + esc(look.name) + '</button>';
+    const adj = [M.spacing && 'every ' + (M.spacing === 1 ? 'bulb' : M.spacing === 2 ? '2nd bulb' : M.spacing + 'th bulb')].filter(Boolean);
+    if (M.theme && themeCols(M.theme)) html = '<p class="adjnote">Master colors “' + esc(M.theme) + '” recolor looks in the Library, but not here: this look plays the colors below.</p>' + html;
+    if (adj.length) html = '<p class="adjnote">Gallery setting on: ' + esc(adj.join(', ')) + ' — the preview and roof use it for every look.</p>' + html;
+    $('ctrls').innerHTML = html; $('ctrls').querySelectorAll('input[type=range]').forEach(rangeFill);
+    renderAITweak();
+  }
+  function rangeWord(c, v) { return c.word(v); }
+  function changed() { if (state.edit) { state.edit.touched = true; state.edit.R = null; } vStage.dirty = true; syncEditState(); }
+  // the edited look with the gallery-wide adjustments (speed/brightness/spacing/theme) applied = what the stage shows and the roof gets
+  function editR() { const e = state.edit; if (!e) return null; const k = JSON.stringify(M); if (!e.R || e.Rk !== k || e.Rsrc !== e.P) { e.R = applyMaster(e.P); e.Rk = k; e.Rsrc = e.P; } return e.R; }
+  function resetStage() { vStage.inst = null; vStage.instFx = null; vStage.segInst = []; vStage.dbuf = null; }
+  // ---- colours: swatch row (A) + per-bulb sequence (C) ----
+  const CTOOLS = '<div class="ctools"><button id="rollBtn" title="Random colors that go together (never white)">🎲 Random</button><button id="themeBtn">🎨 Themes ▾</button></div>';
+  const MODE = P => '<div class="cmodebar"><div class="cmode"><button data-cm="swatch" class="' + (P.cmode !== 'bulb' ? 'on' : '') + '">Swatches</button><button data-cm="bulb" class="' + (P.cmode === 'bulb' ? 'on' : '') + '">Per bulb</button></div><button class="lbltog' + (APP.colorLabels ? ' on' : '') + '" data-act="labels" title="Show where the pattern starts and which color is where, on WLED">#  Labels</button></div>';
+  function stripColors(P) {   // static view of where each colour lands along this layout's pixels
+    const out = [];
+    if (P.cmode === 'bulb') { const L = P.seq.reduce((a, e) => a + e.n, 0) || 1, flat = []; P.seq.forEach(e => { for (let k = 0; k < e.n; k++) flat.push(e.c); }); for (let i = 0; i < N; i++) out.push(flat[i % L]); return out; }
+    const sm = swatchMap(P); if (sm) return sm.cols;
+    const st = paletteStops(Object.assign({}, P, { colors: P.colors.length ? P.colors : [BLACK] }));
+    for (let i = 0; i < N; i++) {
+      const x = i / (N - 1) * 255; let k = 0; while (k < st.length - 2 && st[k + 1][0] < x) k++;
+      const [a, ca] = st[k], [b, cb] = st[k + 1] || st[k], f = b > a ? clamp((x - a) / (b - a), 0, 1) : 0;
+      out.push(P.blend ? ca.map((v, j) => v + (cb[j] - v) * f) : (x >= b ? cb : ca));
+    }
+    return out;
+  }
+  // where each swatch lands when the controller uses its built-in palettes (3 slots): pal 5 = 16 blocks (2 colors 8/8, 3 colors 5/5/5/1), pal 4 = gradient, no wrap
+  function swatchMap(P) {
+    if (P.cmode === 'bulb' || !P.mycol || !P.colors?.length) return null;
+    const q = effective(P), cs = P.colors, n = cs.length; if (q.cpal) return null;
+    const cols = [], own = [];
+    for (let i = 0; i < N; i++) {
+      const x = i / (N - 1);
+      if (q.pal === 2) { cols.push(cs[0]); own.push(0); continue; }
+      if (q.pal === 5) { const b = Math.min(15, Math.floor(x * 16)), j = n === 2 ? (b < 8 ? 0 : 1) : (b < 5 ? 0 : b < 10 ? 1 : b < 15 ? 2 : 0); cols.push(cs[j]); own.push(j); continue; }
+      if (q.pal === 4) { const f = x * (n - 1), a = Math.min(n - 2, Math.floor(f)), t = f - a; cols.push(cs[a].map((v, k) => v + (cs[a + 1][k] - v) * t)); own.push(Math.round(f)); continue; }
+      return null;
+    }
+    return { cols, own };
+  }
+  const stripHTML = P => '<div class="cstripw"><canvas class="cstrip" id="cstrip"></canvas><div class="ctip" id="ctip"></div></div><div class="cstrip-l"><span>Bulb 1 · ' + esc(RUNS[0]?.name || 'first run') + '</span><span>' + esc(RUNS[1]?.name || 'next run') + '</span><span>' + esc(RUNS.at(-1)?.name || 'last run') + '</span><span>' + N + ' pixels</span></div>';
+  function swatchesHTML(P) {
+    const n = P.colors.length, maxRep = Math.max(1, Math.floor((P.blend ? 17 : 9) / n)), cust = !!effective(P).cpal;
+    return MODE(P) + stripHTML(P) + '<div class="swrow">' + P.colors.map((c, j) => { const lk = state.edit.locks[j]; return '<div class="sw2t" draggable="true" data-sw="' + j + '" style="--c:' + hex(c) + '"><input type="color" data-swc="' + j + '" value="' + hex(c) + '"><em>' + (j + 1) + '</em><button class="lk' + (lk ? ' on' : '') + '" data-lock="' + j + '" title="Lock">' + (lk ? '🔒' : '🔓') + '</button>' + (n > 1 ? '<button class="rm" data-rm="' + j + '" title="Remove">×</button>' : '') + '</div>'; }).join('') +
+      (n < 8 ? '<button class="sw2add" data-act="add" title="Add a color">＋</button>' : '') + '</div>' +
+      '<div class="crow"><div class="seg2"><button data-bl="0" class="' + (!P.blend ? 'on' : '') + '">Blocks</button><button data-bl="1" class="' + (P.blend ? 'on' : '') + '">Blend</button></div>' +
+      '<div class="seg2"><span>Repeat</span>' + [1, 2, 4].map(r => '<button data-rp="' + r + '" class="' + ((P.rep || 1) === r ? 'on' : '') + '"' + (r > maxRep ? ' disabled title="Too many color changes for one palette"' : '') + '>' + r + '×</button>').join('') + '</div></div>' +
+      '<p class="cnote">Drag to reorder the colors along the pixel layout. ' + (cust ? '<b>Custom palette</b> on the controller (' + Math.min(18, paletteStops(P).length) + '/18 stops).' : 'Fits the controller’s 3 color slots.') + '</p>' + CTOOLS +
+      '<button class="linkbtn" data-act="builtin">Use a built-in palette instead</button>';
+  }
+  const BULB_PRESETS = [['Classic C9', [[[255, 0, 0], 1], [[0, 255, 0], 1], [[0, 0, 255], 1], [[220, 100, 20], 1]]], ['Candy Cane', [[[220, 0, 20], 2], [[255, 90, 120], 1]]], ['Evergreen & sky', [[[0, 50, 200], 2], [[100, 255, 0], 1]]], ['Harvest', [[[255, 80, 0], 2], [[170, 25, 0], 1], [[255, 140, 0], 1]]], ['Hanukkah', [[[0, 60, 255], 2], [[255, 190, 40], 1]]]];
+  function bulbsHTML(P) {
+    const L = P.seq.reduce((a, e) => a + e.n, 0) || 1;
+    return MODE(P) + stripHTML(P) +
+      '<div class="strand">' + P.seq.map(e => Array.from({ length: e.n }, () => '<i class="' + (e.c ? '' : 'gap') + '" style="' + (e.c ? 'background:' + hex(e.c) + ';box-shadow:0 0 8px ' + hex(e.c) : '') + '"></i>').join('')).join('') + '<span>× ' + Math.round(N / L) + ' around the house</span></div>' +
+      '<div class="seqlist">' + P.seq.map((e, j) => '<div class="seqrow" draggable="true" data-sq="' + j + '"><span class="grip">⋮⋮</span>' +
+        (e.c ? '<label class="sqc" style="background:' + hex(e.c) + '"><input type="color" data-sqc="' + j + '" value="' + hex(e.c) + '"></label>' : '<span class="sqgap">gap</span>') +
+        '<span class="dots">' + Array.from({ length: e.n }, () => '<i class="' + (e.c ? '' : 'gap') + '" style="' + (e.c ? 'background:' + hex(e.c) : '') + '"></i>').join('') + '</span>' +
+        '<span class="step"><button data-dn="' + j + '">−</button><b>' + e.n + '</b><button data-up="' + j + '">+</button></span>' +
+        (e.c ? '<button class="lk' + (state.edit.locks[j] ? ' on' : '') + '" data-lock="' + j + '">' + (state.edit.locks[j] ? '🔒' : '🔓') + '</button>' : '<span></span>') +
+        '<button class="rm" data-rmq="' + j + '" title="Remove">×</button></div>').join('') + '</div>' +
+      '<div class="crow"><button class="btn sm" data-act="addc">＋ Add color</button><button class="btn sm" data-act="addg">＋ Add gap</button></div>' +
+      '<div class="bpre">' + BULB_PRESETS.map((b, k) => '<button data-bp="' + k + '"><i>' + b[1].map(([c, n]) => Array.from({ length: n }, () => '<u style="background:' + hex(c) + '"></u>').join('')).join('') + '</i>' + esc(b[0]) + '</button>').join('') + '</div>' +
+      '<p class="cnote">Each color is its own segment on the controller, so the look’s effect still runs inside your pattern.</p>' + CTOOLS;
+  }
+  const near = (a, b) => a.map((v, j) => Math.round((v + b[j]) / 2));
+  function visibleColors(P) {   // the colors a look actually shows: its swatches, its own colors (no black background), or samples of its palette
+    if (P.cmode === 'bulb') return P.seq.filter(e => e.c).map(e => e.c.slice());
+    if (P.mycol && P.colors?.length) return P.colors.map(c => c.slice());
+    if (usesPal(P.fx) && (P.pal >= 6 || P.pal === 0) && FXL) { const pr = FXL.paletteRGB(P.pal, P.col, P.fx); return [0, 5, 10].map(k => [pr[k * 3], pr[k * 3 + 1], pr[k * 3 + 2]].map(v => V16 ? v : UNGAMMA[v])); }
+    const cs = P.col.slice(0, usesPal(P.fx) && P.pal === 2 ? 1 : 3).filter(c => Math.max(...c) > 20).map(c => c.slice());
+    return cs.length ? cs : [[255, 80, 0]];
+  }
+  let warmToast = 0;
+  function warm(c) { const hi = Math.max(...c), lo = Math.min(...c); if (hi > 0 && lo > 0.6 * hi) { if (Date.now() - warmToast > 4000) { warmToast = Date.now(); toast('Kept it warm: no white bulbs', 'var(--accent)'); } return [255, Math.round(140 * hi / 255), Math.round(40 * hi / 255)]; } return c; }
+  function moveItem(arr, from, to) { const [x] = arr.splice(from, 1); arr.splice(to, 0, x); }
+  function colorClick(e) {
+    const P = state.edit.P, t = e.target;
+    const cm = t.closest('[data-cm]');
+    if (cm) {
+      if (cm.dataset.cm === 'bulb' && P.cmode !== 'bulb') {
+        const cs = visibleColors(P); P.seq = cs.map(c => ({ c: c.slice(), n: 1 })); P.cmode = 'bulb';
+        if (P._fxBulb != null) { P.fx = P._fxBulb; P.c1 = P._c1Bulb; delete P._fxBulb; delete P._c1Bulb; }   // undo the swatch-mode effect swap
+      }
+      else if (cm.dataset.cm === 'swatch' && P.cmode === 'bulb') {
+        P.colors = P.seq.filter(e => e.c).map(e => e.c.slice()); if (!P.colors.length) P.colors = [[255, 80, 0]]; delete P.cmode; P.mycol = true; P.rep = P.rep || 1;
+        if (!usesPal(P.fx)) { P._fxBulb = P.fx; P._c1Bulb = P.c1; P.fx = 65; P.c1 = 0; }   // swatches need a palette effect; remembered so Per bulb gets it back
+      }
+      state.edit.locks = []; resetStage(); renderControls(); return changed(), true;
+    }
+    const act = t.closest('[data-act]')?.dataset.act;
+    if (act === 'mycol') { P.mycol = true; P.colors = visibleColors(P); P.rep = 1; P.blend = false; state.edit.locks = []; renderControls(); return changed(), true; }
+    if (act === 'builtin') { const cs = P.colors || []; P.mycol = false; P.col = [cs[0] || [255, 80, 0], cs[1] || cs[0] || BLACK, cs[2] || cs[0] || BLACK]; P.pal = 4; state.edit.locks = []; renderControls(); return changed(), true; }
+    if (act === 'add') { const k = P.colors.length; P.colors.push(k ? near(P.colors[k - 1], P.colors[0]).map((v, j, a) => j === a.indexOf(Math.max(...a)) ? 255 : v) : [255, 80, 0]); renderControls(); return changed(), true; }
+    if (act === 'addc') { const last = P.seq.filter(e => e.c).pop(); P.seq.push({ c: last ? last.c.slice() : [255, 80, 0], n: 1 }); renderControls(); return changed(), true; }
+    if (act === 'labels') { APP.colorLabels = !APP.colorLabels; save(['colorLabels']); renderControls(); return true; }
+    if (act === 'addg') { P.seq.push({ c: null, n: 1 }); renderControls(); return changed(), true; }
+    const rm = t.closest('[data-rm]'); if (rm) { P.colors.splice(+rm.dataset.rm, 1); state.edit.locks.splice(+rm.dataset.rm, 1); renderControls(); return changed(), true; }
+    const rq = t.closest('[data-rmq]'); if (rq) { if (P.seq.length > 1) { P.seq.splice(+rq.dataset.rmq, 1); state.edit.locks.splice(+rq.dataset.rmq, 1); } renderControls(); return changed(), true; }
+    const up = t.closest('[data-up]'), dn = t.closest('[data-dn]');
+    if (up || dn) { const e2 = P.seq[+(up || dn).dataset[up ? 'up' : 'dn']]; e2.n = clamp(e2.n + (up ? 1 : -1), 1, 6); renderControls(); return changed(), true; }
+    const bl = t.closest('[data-bl]'); if (bl) { P.blend = bl.dataset.bl === '1'; const max = Math.max(1, Math.floor((P.blend ? 17 : 9) / P.colors.length)); if ((P.rep || 1) > max) P.rep = 1; renderControls(); return changed(), true; }
+    const rp = t.closest('[data-rp]'); if (rp && !rp.disabled) { P.rep = +rp.dataset.rp; renderControls(); return changed(), true; }
+    const bp = t.closest('[data-bp]'); if (bp) { P.seq = BULB_PRESETS[+bp.dataset.bp][1].map(([c, n]) => ({ c: c.slice(), n })); state.edit.locks = []; renderControls(); return changed(), true; }
+    return false;
+  }
+  function colorInput(e) {
+    const P = state.edit.P, t = e.target;
+    if (t.dataset.swc != null) { const c = P.colors[+t.dataset.swc] = warm(unhex(t.value)); t.parentNode.style.setProperty('--c', hex(c)); if (hex(c) !== t.value) t.value = hex(c); refreshStrip(); changed(); return true; }
+    if (t.dataset.sqc != null) { const c = P.seq[+t.dataset.sqc].c = warm(unhex(t.value)); t.parentNode.style.background = hex(c); if (hex(c) !== t.value) t.value = hex(c); const row = t.closest('.seqrow'); row && row.querySelectorAll('.dots i').forEach(d => d.style.background = hex(c)); refreshStrip(); changed(); return true; }
+    return false;
+  }
+  function gapOf(P) {   // dark bulbs between lit ones: spc in swatch mode; a uniform gap after every color in per-bulb mode (-1 = mixed)
+    if (P.cmode !== 'bulb') return P.spc || 0;
+    const sq = P.seq; if (!sq.some(e => !e.c)) return 0;
+    let g = null;
+    for (let j = 0; j < sq.length; j++) { if (!sq[j].c) continue; const nx = sq[j + 1]; if (!nx || nx.c) return -1; if (g == null) g = nx.n; else if (g !== nx.n) return -1; }
+    return sq.filter(e => !e.c).length === sq.filter(e => e.c).length ? g : -1;
+  }
+  function setGap(P, g) {
+    if (P.cmode !== 'bulb') { P.spc = g; return; }
+    const cols = P.seq.filter(e => e.c), locks = state.edit.locks.filter((_, j) => P.seq[j] && P.seq[j].c), out = [], nl = [];
+    cols.forEach((e, k) => { out.push(e); nl.push(locks[k]); if (g > 0) { out.push({ c: null, n: g }); nl.push(false); } });
+    P.seq = out.length ? out : [{ c: [255, 80, 0], n: 1 }]; state.edit.locks = nl; P.spc = 0;
+  }
+  function refreshStrip() { /* the strip is a live canvas now: redrawn every frame */ }
+  // ---- hover: highlight one color on WLED + strip; hover the strip for bulb info ----
+  const hov = { hi: -1, k: -1 };
+  const RUN_NAMES = (layout.runs || []).slice().map((r, k) => ({ r, k })).sort((a, b) => (a.r.port - b.r.port) || (a.k - b.k)).map(o => o.r.name);
+  const RUN_START = LEDS.reduce((a, l, i) => { if (!i || LEDS[i - 1].run !== l.run) a.push(i); return a; }, []);
+  function colorList(P) { return P.cmode === 'bulb' ? null : (P.mycol && P.colors ? P.colors : P.col); }
+  function ownerAt(P, k) {   // which color (swatch index / per-bulb row index) bulb k is assigned to
+    if (P.cmode === 'bulb') { const L = P.seq.reduce((a, e) => a + e.n, 0) || 1; let r = k % L; for (let j = 0; j < P.seq.length; j++) { if (r < P.seq[j].n) return j; r -= P.seq[j].n; } return -1; }
+    if (!(P.mycol && P.colors)) return -1;
+    const sm = swatchMap(P); if (sm) return sm.own[k];
+    const n = P.colors.length, B = n * (P.rep || 1);
+    return (P.blend ? Math.round(k / (N - 1) * B) : Math.min(B - 1, Math.floor(k / N * B))) % n;
+  }
+  function keepFor(P, buf) {   // per bulb: true when it belongs to the hovered color
+    const out = keepFor.o || (keepFor.o = new Uint8Array(N)), hi = hov.hi;
+    if (P.cmode === 'bulb') { for (let i = 0; i < N; i++) out[i] = ownerAt(P, i) === hi ? 1 : 0; return out; }
+    const cl = colorList(P); if (!cl || !cl[hi]) { out.fill(1); return out; }
+    const nc = cl.map(c => { const m = Math.max(...c) || 1; return [c[0] / m, c[1] / m, c[2] / m]; });
+    for (let i = 0; i < N; i++) {   // effects place palette colors anywhere, so match each bulb to its nearest swatch color
+      const r = buf[i * 3], g = buf[i * 3 + 1], b = buf[i * 3 + 2], m = Math.max(r, g, b);
+      if (m < 6) { out[i] = 0; continue; }
+      let best = -1, bd = 9; nc.forEach((t, j) => { const d = Math.abs(r / m - t[0]) + Math.abs(g / m - t[1]) + Math.abs(b / m - t[2]); if (d < bd) { bd = d; best = j; } });
+      out[i] = best === hi ? 1 : 0;
+    }
+    return out;
+  }
+  function highlight(P, buf) {
+    if (hov.hi < 0 || !buf) return buf;
+    const keep = keepFor(P, buf), o = highlight.o || (highlight.o = new Uint8Array(N * 3));
+    for (let i = 0; i < N; i++) { const f = keep[i] ? 1 : 0; o[i * 3] = buf[i * 3] * f; o[i * 3 + 1] = buf[i * 3 + 1] * f; o[i * 3 + 2] = buf[i * 3 + 2] * f; }
+    return o;
+  }
+  function drawStrip(P, buf) {
+    const cv = document.getElementById('cstrip'); if (!cv) return;
+    const r = cv.getBoundingClientRect(); if (!r.width) return;
+    const w = Math.round(r.width * DPR), h = Math.round(r.height * DPR);
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    const x = cv.getContext('2d'), sw = w / N, base = stripColors(P), keep = hov.hi >= 0 ? keepFor(P, buf) : null;
+    x.globalCompositeOperation = 'source-over'; x.fillStyle = '#05070d'; x.fillRect(0, 0, w, h);
+    x.globalCompositeOperation = 'lighter';
+    for (let k = 0; k < N; k++) {
+      const own = keep ? (P.cmode === 'bulb' ? keep[k] : ownerAt(P, k) === hov.hi || keep[k]) : 1, x0 = Math.floor(k * sw), x1 = Math.floor((k + 1) * sw);
+      const c = base[k];   // faint: where the color is assigned
+      if (c) { const a = own ? 0.28 : 0.05; x.fillStyle = 'rgba(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ',' + a + ')'; x.fillRect(x0, 0, x1 - x0, h); }
+      if (buf) { const f = own ? 1 : 0.1; x.fillStyle = 'rgb(' + (buf[k * 3] * f | 0) + ',' + (buf[k * 3 + 1] * f | 0) + ',' + (buf[k * 3 + 2] * f | 0) + ')'; x.fillRect(x0, 0, x1 - x0, h); }   // live: what the bulb is doing now
+    }
+    x.globalCompositeOperation = 'source-over'; x.fillStyle = '#0b0e0d';
+    RUN_START.forEach(i => { if (i) x.fillRect(Math.round(i * sw) - DPR / 2, 0, DPR, h); });
+    if (hov.k >= 0) { x.strokeStyle = '#ffe2bd'; x.lineWidth = 1.5 * DPR; x.strokeRect(hov.k * sw - DPR, DPR * 0.75, sw + 2 * DPR, h - 1.5 * DPR); }
+  }
+  function pill(ctx, x, y, text, fill, ink) {
+    ctx.font = '600 ' + (11 * DPR) + 'px Inter, sans-serif';
+    const w = Math.max(18 * DPR, ctx.measureText(text).width + 10 * DPR), h = 18 * DPR;
+    ctx.fillStyle = fill; ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x - w / 2, y - h / 2, w, h, 6 * DPR); else ctx.rect(x - w / 2, y - h / 2, w, h); ctx.fill();
+    ctx.fillStyle = ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, x, y + 0.5 * DPR);
+  }
+  function drawOverlay(v, P) {   // on the stage house: hovered bulb ring + optional labels
+    const ctx = v.ctx, k = v.k, px = l => [l.x * k + v.ox, l.y * k + v.oy];
+    if (APP.colorLabels) {
+      const lift = 17 * DPR, [sx, sy] = px(LEDS[0]); pill(ctx, sx - 4 * DPR, sy + lift + 4 * DPR, 'start →', 'rgba(255,179,71,.92)', '#200c00');
+      const runs = [];   // label each stretch of one color: blocks in swatch mode, pattern entries for short per-bulb runs
+      let a = 0; for (let i = 1; i <= N; i++) if (i === N || ownerAt(P, i) !== ownerAt(P, a)) { runs.push([a, i - 1, ownerAt(P, a)]); a = i; }
+      if (runs.length <= 16) runs.forEach(([s0, s1, j]) => {
+        if (j < 0 || (hov.hi >= 0 && j !== hov.hi)) return;
+        const c = P.cmode === 'bulb' ? P.seq[j].c : colorList(P)[j]; if (!c) return;
+        const [x, y] = px(LEDS[(s0 + s1) >> 1]), num = P.cmode === 'bulb' ? P.seq.slice(0, j + 1).filter(e => e.c).length : j + 1;
+        pill(ctx, x, y - lift, String(num), 'rgba(3,5,10,.78)', '#eef2ff'); ctx.fillStyle = hex(c); ctx.beginPath(); ctx.arc(x, y - lift + 11 * DPR, 2.4 * DPR, 0, 6.2832); ctx.fill();
+      });
+    }
+    if (hov.k >= 0) { const [x, y] = px(LEDS[hov.k]); ctx.strokeStyle = 'rgba(255,215,160,.95)'; ctx.lineWidth = 1.5 * DPR; ctx.beginPath(); ctx.arc(x, y, 9 * DPR, 0, 6.2832); ctx.stroke(); }
+  }
+  function setHi(i) { if (hov.hi === i) return; hov.hi = i; $('ctrls').querySelectorAll('[data-sw],[data-sq]').forEach(el => el.classList.toggle('hl', +(el.dataset.sw ?? el.dataset.sq) === i)); }
+  $('ctrls').addEventListener('pointerover', e => {
+    if (dragFrom) return;
+    const el = e.target.closest('[data-sw],[data-sq]'); if (!el) { setHi(-1); return; }
+    const i = +(el.dataset.sw ?? el.dataset.sq); setHi(el.dataset.sq != null && !state.edit.P.seq[i]?.c ? -1 : i);
+  });
+  $('ctrls').addEventListener('pointerleave', () => setHi(-1));
+  $('ctrls').addEventListener('pointermove', e => {
+    const cv = e.target.closest('#cstrip'), tip = $('ctip');
+    if (!cv) { if (hov.k >= 0) { hov.k = -1; tip && tip.classList.remove('on'); } return; }
+    const r = cv.getBoundingClientRect(), k = clamp(Math.floor((e.clientX - r.left) / r.width * N), 0, N - 1), P = editR();
+    hov.k = k; const j = ownerAt(P, k);
+    const cn = j < 0 ? '' : P.cmode === 'bulb' ? (P.seq[j].c ? ' · color ' + P.seq.slice(0, j + 1).filter(e2 => e2.c).length : ' · gap') : ' · color ' + (j + 1);
+    tip.textContent = 'Bulb ' + (k + 1) + ' · ' + (RUN_NAMES[LEDS[k].run] || '') + cn;
+    tip.style.left = clamp(e.clientX - r.left, 80, r.width - 80) + 'px'; tip.classList.add('on');
+  });
+  // drag to reorder (swatches and per-bulb rows)
+  let dragFrom = null;
+  $('ctrls').addEventListener('dragstart', e => { const s = e.target.closest('[data-sw],[data-sq]'); if (!s) return; dragFrom = { kind: s.dataset.sw != null ? 'sw' : 'sq', i: +(s.dataset.sw ?? s.dataset.sq) }; e.dataTransfer.effectAllowed = 'move'; s.classList.add('dragging'); });
+  $('ctrls').addEventListener('dragover', e => { if (dragFrom && e.target.closest(dragFrom.kind === 'sw' ? '[data-sw]' : '[data-sq]')) e.preventDefault(); });
+  $('ctrls').addEventListener('drop', e => {
+    const tgt = e.target.closest(dragFrom?.kind === 'sw' ? '[data-sw]' : '[data-sq]'); if (!dragFrom || !tgt) return; e.preventDefault();
+    const P = state.edit.P, to = +(tgt.dataset.sw ?? tgt.dataset.sq), arr = dragFrom.kind === 'sw' ? P.colors : P.seq;
+    if (to !== dragFrom.i) { moveItem(arr, dragFrom.i, to); moveItem(state.edit.locks, dragFrom.i, to); }
+    dragFrom = null; renderControls(); changed();
+  });
+  $('ctrls').addEventListener('dragend', () => { dragFrom = null; });
+  $('ctrls').addEventListener('input', e => {
+    if (colorInput(e)) return;
+    if (e.target.dataset.gap != null) { if (e.target.value === '') return; setGap(state.edit.P, clamp(Math.round(+e.target.value) || 0, 0, 9)); renderControls(); changed(); const g = $('ctrls').querySelector('[data-gap]'); if (g) g.focus(); return; }
+    const el = e.target, i = el.dataset.i; if (i == null) return;
+    const c = state.edit.defs[+i], P = state.edit.P;
+    if (c.type === 'range' && el.dataset.curve) { P.sx = posToSp(+el.value); rangeFill(el); $('val' + i).textContent = speedWord(P.sx); }
+    else if (c.type === 'range') { P[c.k] = +el.value; rangeFill(el); $('val' + i).textContent = rangeWord(c, P[c.k]); }
+    else if (c.type === 'check') P[c.k] = el.checked;
+    else if (c.type === 'colors') { const j = +el.dataset.j, v = unhex(el.value), cc = P.col[j] = j === 0 ? warm(v) : v; el.parentNode.querySelector('span').style.background = hex(cc); if (hex(cc) !== el.value) el.value = hex(cc); }   // backgrounds may be dim/neutral
+    changed();
+  });
+  $('ctrls').addEventListener('click', e => {
+    const P = state.edit.P;
+    const lk = e.target.closest('[data-lock]');
+    if (lk) { e.preventDefault(); e.stopPropagation(); const j = +lk.dataset.lock; state.edit.locks[j] = !state.edit.locks[j]; renderControls(); return; }
+    if (colorClick(e)) return;
+    const ng = e.target.closest('[data-nudge]');
+    if (ng) { P.sx = clamp(P.sx + +ng.dataset.nudge, 0, 255); const sl = ng.parentNode.querySelector('input[type=range]'); sl.value = spToPos(P.sx); rangeFill(sl); $('val' + ng.dataset.i).textContent = speedWord(P.sx); return changed(); }
+    const sw = e.target.closest('[data-slow]'); if (sw) { P.slow = +sw.dataset.slow; resetStage(); renderControls(); return changed(); }
+    const dr = e.target.closest('[data-dir]'); if (dr) { P.rev = dr.dataset.dir === 'r'; P.mi = dr.dataset.dir === 'm'; resetStage(); renderControls(); return changed(); }
+    if (e.target.closest('#rollBtn')) { const cur = P.cmode === 'bulb' ? P.seq.map(x => x.c || BLACK) : P.mycol ? P.colors : P.col.slice(0, 3); return applyColors(randomColors(cur, state.edit.locks), true); }
+    if (e.target.closest('#themeBtn')) { if ($('themePop').classList.contains('on')) closeThemes(); else openThemes(e.target.closest('#themeBtn')); return; }
+    if (e.target.id === 'resetBtn') { state.edit.P = bakeMaster(clone(BY_ID[state.edit.id].P)); state.edit.locks = []; resetStage(); renderControls(); return changed(); }
+    const b = e.target.closest('button[data-i][data-v]'); if (!b) return;
+    const c = state.edit.defs[+b.dataset.i];
+    if (c.type === 'seg') setGap(P, +b.dataset.v); else if (c.type === 'palette') P.pal = +b.dataset.v;
+    renderControls(); changed();
+  });
+
+  /* colours: themes + random (saturation ≥ .75, so never white) */
+  const hsv2rgb = (h, s, v) => { const i = Math.floor(h * 6), f = h * 6 - i, p = v * (1 - s), q = v * (1 - f * s), t = v * (1 - (1 - f) * s); return [[v, t, p], [q, v, p], [p, v, t], [p, q, v], [t, p, v], [v, p, q]][((i % 6) + 6) % 6].map(x => Math.round(x * 255)); };
+  function randomColors(cur, locks) {
+    const base = Math.random(), sch = [[0, .07, -.07], [0, .5, .08], [0, .33, .66], [0, .12, .5]][Math.floor(Math.random() * 4)];
+    return cur.map((c, j) => locks && locks[j] ? c : hsv2rgb((base + sch[j % 3] + 1) % 1, .75 + Math.random() * .25, .85 + Math.random() * .15));
+  }
+  function applyColors(cols, sameCount) {
+    const P = state.edit.P, L = state.edit.locks;
+    if (P.cmode === 'bulb') { let k = 0; P.seq = P.seq.map((e, j) => !e.c || L[j] ? e : { c: cols[sameCount ? j : k++ % cols.length].slice(), n: e.n }); }
+    else if (P.mycol) P.colors = P.colors.map((c, j) => L[j] ? c : cols[sameCount ? j : j % cols.length].slice());
+    else if (usesPal(P.fx) && P.pal === 2) { if (!L[0]) P.col[0] = cols[0].slice(); }       // keep the look's own background
+    else if (usesPal(P.fx) && P.pal === 3) { [0, 1].forEach(j => { if (!L[j] && cols[j]) P.col[j] = cols[j].slice(); }); }
+    else if (usesPal(P.fx)) { P.mycol = true; P.colors = cols.map((c, j) => (L[j] && P.col[j] ? P.col[j] : c).slice()); P.rep = 1; P.blend = false; state.edit.locks = []; }
+    else P.col = P.col.map((c, j) => L[j] ? c : (cols[j] || c).slice());
+    renderControls(); changed();
+  }
+  const themePop = document.createElement('div'); themePop.id = 'themePop'; document.body.appendChild(themePop);
+  function openThemes(btn) {
+    const cur = JSON.stringify(state.edit.P.mycol ? state.edit.P.colors : state.edit.P.col);
+    themePop.innerHTML = '<div class="thm-h"><b>Color themes</b><span>click to try · Esc to close</span></div>' + CAT.THEMES.map(g => '<h4>' + esc(g[0]) + '</h4>' + g[1].map(t => '<button class="thm' + (JSON.stringify(t[1]) === cur ? ' on' : '') + '" data-th=\'' + JSON.stringify(t[1]) + '\'><i>' + t[1].map(c => '<u style="background:' + hex(c) + '"></u>').join('') + '</i>' + esc(t[0]) + '</button>').join('')).join('');
+    const r = btn.getBoundingClientRect();
+    themePop.style.left = Math.max(12, Math.min(innerWidth - 392, r.right - 380)) + 'px'; themePop.style.top = Math.max(12, Math.min(innerHeight - 482, r.bottom + 8)) + 'px';
+    themePop.classList.add('on'); btn.classList.add('open');
+  }
+  function closeThemes() { themePop.classList.remove('on'); $('themeBtn')?.classList.remove('open'); }
+  themePop.addEventListener('click', e => { const b = e.target.closest('[data-th]'); if (!b) return; applyColors(JSON.parse(b.dataset.th)); themePop.querySelectorAll('.thm').forEach(x => x.classList.toggle('on', x === b)); $('themeBtn')?.classList.add('open'); });
+  document.addEventListener('mousedown', e => { if (themePop.classList.contains('on') && e.target.closest && !themePop.contains(e.target) && !e.target.closest('#themeBtn')) closeThemes(); });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && themePop.classList.contains('on')) { e.stopPropagation(); closeThemes(); } }, true);
+
+  /* ---------- names + categories ---------- */
+  function editOf(id) { return APP.edits[id] || (APP.edits[id] = {}); }
+  function renameLook(id, name) {
+    name = String(name || '').trim(); const l = BY_ID[id]; if (!l || !name || name === l.name) return;
+    l.name = name; const u = APP.userLooks.find(x => x.id === id); if (u) { u.name = name; save(['userLooks']); } else { editOf(id).name = name; save(['edits']); }
+    if (state.edit?.id === id) { $('eName').textContent = name; $('fsName').textContent = name; $('pTitle').textContent = 'Tune ' + name; }
+    renderGallery(true); onHouseChanged();
+  }
+  function setLookCats(id, cats) {
+    const l = BY_ID[id]; l.cats = cats; const u = APP.userLooks.find(x => x.id === id);
+    if (u) { u.cats = cats; save(['userLooks']); } else { editOf(id).cats = cats; save(['edits']); }
+    renderNav(); renderGallery(true); renderCrumbCats();
+  }
+  function addCategory(label) {
+    label = String(label || '').trim(); if (!label) return null;
+    const id = 'c-' + label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (!CAT_LABEL[id]) { APP.cats.push([id, label, '◆']); CAT_LABEL[id] = label; save(['cats']); renderNav(); }
+    return id;
+  }
+  function startRename(el, id) {
+    const inp = document.createElement('input'); inp.className = 'rn'; inp.value = BY_ID[id].name; el.replaceWith(inp); inp.focus(); inp.select();
+    let done = false; const finish = ok => { if (done) return; done = true; inp.replaceWith(el); if (ok) renameLook(id, inp.value); };
+    inp.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') finish(true); else if (e.key === 'Escape') finish(false); };
+    inp.onblur = () => finish(true);
+  }
+  function renderCrumbCats() {
+    if (!state.edit) return; const l = BY_ID[state.edit.id];
+    $('eCat').innerHTML = l.cats.filter(c => c !== 'mine').map(c => '<span class="cc">' + esc(CAT_LABEL[c] || c) + '</span>').join('') + '<button id="catBtn">＋ Categories</button>';
+  }
+  const catPop = document.createElement('div'); catPop.id = 'catPop'; document.body.appendChild(catPop);
+  function openCatPop(anchor, id) {
+    const l = BY_ID[id]; catPop.dataset.id = id;
+    catPop.innerHTML = '<b>' + esc(l.name) + ' is in…</b>' + allCats().concat([['mine', 'Saved looks', '★']]).map(c => '<label><input type="checkbox" data-cat="' + c[0] + '"' + (l.cats.includes(c[0]) ? ' checked' : '') + '> ' + esc(c[1]) + '</label>').join('') + '<div class="newc"><input id="newCat" placeholder="New category, e.g. Thanksgiving"><button id="newCatBtn">Add</button></div>';
+    const r = anchor.getBoundingClientRect(); catPop.style.left = Math.min(innerWidth - 272, r.left) + 'px'; catPop.style.top = (r.bottom + 8) + 'px'; catPop.classList.add('on');
+  }
+  catPop.addEventListener('change', e => { const cb = e.target.closest('[data-cat]'); if (!cb) return; const id = catPop.dataset.id; let cats = BY_ID[id].cats.slice(); const c = cb.dataset.cat; cats = cb.checked ? (cats.includes(c) ? cats : cats.concat([c])) : cats.filter(x => x !== c); setLookCats(id, cats); });
+  catPop.addEventListener('click', e => { if (e.target.id !== 'newCatBtn') return; const cid = addCategory($('newCat').value); if (!cid) return; const id = catPop.dataset.id; if (!BY_ID[id].cats.includes(cid)) setLookCats(id, BY_ID[id].cats.concat([cid])); openCatPop($('catBtn') || document.body, id); });
+  catPop.addEventListener('keydown', e => { if (e.target.id === 'newCat' && e.key === 'Enter') $('newCatBtn').click(); e.stopPropagation(); });
+  document.addEventListener('mousedown', e => { if (catPop.classList.contains('on') && e.target.closest && !catPop.contains(e.target) && !e.target.closest('#catBtn')) catPop.classList.remove('on'); });
+  document.addEventListener('click', e => {
+    if (e.target.id === 'catBtn') { if (catPop.classList.contains('on')) catPop.classList.remove('on'); else openCatPop(e.target, state.edit.id); return; }
+    if (e.target.id === 'eName' && state.edit) return startRename(e.target, state.edit.id);
+    if (e.target.id === 'navAdd') {
+      const inp = document.createElement('input'); inp.className = 'rn'; inp.style.cssText = 'width:100%;font-size:13px;margin-top:2px'; inp.placeholder = 'Category name, then Enter';
+      e.target.replaceWith(inp); inp.focus();
+      inp.onkeydown = ev => { ev.stopPropagation(); if (ev.key === 'Enter') { const cid = addCategory(inp.value); if (cid) { state.sec = cid; renderNav(); renderGallery(); } else renderNav(); } else if (ev.key === 'Escape') renderNav(); };
+      inp.onblur = () => renderNav();
+    }
+  });
+
+  /* ---------- preview vs on WLED ---------- */
+  function syncEditState() {
+    if (!state.edit) return;
+    const e = state.edit, look = BY_ID[e.id], hid = houseLookId(), hname = houseName();
+    const R = editR(), sync = hid === e.id && stateMatches(R) && Math.round(R.bri) === (WL.state?.bri ?? -1);
+    const edited = !sameP(R, applyMaster(Object.assign({}, look.P, { colFixed: true })));
+    $('eState').innerHTML = sync
+      ? '<span class="pill sync"><span class="dot"></span>This is current WLED output · <b>' + esc(look.name) + '</b></span>'
+      : '<span class="pill pv"><span class="k">Preview</span><b>' + esc(look.name) + '</b>' + (edited ? '<span style="color:var(--dim)">edited</span>' : '') + '</span><span class="arrow">vs</span><span class="pill hs"><span class="dot"></span><span class="k">Active on WLED</span><b>' + esc(hname) + '</b></span>';
+    const tag = $('stageTag'); tag.classList.toggle('sync', sync); tag.lastChild.textContent = sync ? 'Active on WLED' : 'Preview';
+    $('mini').classList.toggle('gone', sync && !state.pushing); $('miniName').textContent = hname;
+    $('revertBtn').disabled = sync || !hid;
+    if (!state.pushing) {
+      [$('pushBtn'), $('fsPush')].forEach(b => { b.classList.toggle('synced', sync); b.disabled = sync || !WL.host; });
+      $('pushTxt').textContent = sync ? '✓ Active on WLED' : 'Push to house'; $('fsPush').querySelector('span').textContent = sync ? '✓ Active on WLED' : 'Push to house';
+    }
+    $('fmsg').innerHTML = sync ? 'The roof is showing exactly this. Tweak anything to preview a change; the house won’t change until you push.'
+      : 'Only the preview changes. The roof keeps showing <b>' + esc(hname) + '</b> until you push.';
+  }
+  $('revertBtn').addEventListener('click', () => {
+    const hid = houseLookId(); if (!hid) return;
+    if (hid !== state.edit.id) { location.hash = 'edit=' + hid; return; }
+    const lp = APP.lastPush; state.edit.P = bakeMaster(clone(houseMatchesLastPush() && lp.id === hid ? (lp.base || lp.P) : BY_ID[hid].P)); state.edit.locks = []; resetStage(); renderControls(); changed(); toast('Back to what’s on WLED');
+  });
+  async function doPush() {
+    if (state.pushing) return;
+    const e = state.edit, name = BY_ID[e.id].name; state.pushing = true;
+    const fill = $('pushFill'); $('pushTxt').textContent = 'Fading in on the roof…';
+    fill.style.transition = 'none'; fill.style.width = '0'; void fill.offsetWidth; fill.style.transition = 'width ' + (REDUCED ? 0.01 : 2) + 's linear'; fill.style.width = '100%';
+    try { await pushToHouse(editR(), e.id, e.P); } catch (err) { toast('Push failed: ' + err.message, 'var(--warn)'); }
+    setTimeout(() => { state.pushing = false; fill.style.transition = 'none'; fill.style.width = '0'; syncEditState(); markLive(); toast(name + ' is on WLED'); }, REDUCED ? 50 : 2000);
+  }
+  $('pushBtn').addEventListener('click', doPush); $('fsPush').addEventListener('click', doPush);
+  $('saveBtn').addEventListener('click', () => {
+    const e = state.edit, look = BY_ID[e.id];
+    if (look.custom) { const u = APP.userLooks.find(x => x.id === look.id); u.P = clone(e.P); look.P = clone(e.P); save(['userLooks']); renderGallery(true); return toast('Saved changes to ' + look.name, 'var(--accent)'); }
+    const id = 'mine-' + Date.now().toString(36), nm = look.name + ' · mine';
+    APP.userLooks.unshift({ id, base: look.id, name: nm, cats: ['mine'].concat(look.cats.filter(c => c !== 'mine')), desc: 'Your take on ' + look.name, P: clone(e.P) });
+    save(['userLooks']); buildLooks();
+    const wasLive = houseLookId() === look.id && stateMatches(editR());
+    if (wasLive) { APP.lastPush.id = id; save(['lastPush']); }
+    history.replaceState(null, '', location.href.split('#')[0] + '#edit=' + id); enterEdit(id, true);
+    renderNav(); renderGallery(true); toast('Saved “' + nm + '” to Saved looks', 'var(--accent)');
+  });
+
+  /* ---------- full screen ---------- */
+  function setFull(on) { state.full = on; $('stage').classList.toggle('full', on); $('fsTxt').textContent = on ? 'Exit full screen' : 'Full screen'; vStage.crop = on ? CROP_FULL : CROP_STAGE; vStage.cw = 0; vStage.plate = null; requestAnimationFrame(() => { vStage.resize(); vMini.resize(); }); }
+  $('fsBtn').addEventListener('click', () => setFull(!state.full)); $('fsExit').addEventListener('click', () => setFull(false));
+
+  /* ---------- toast ---------- */
+  let toastT; function toast(msg, color) { $('toastText').textContent = msg; const d = $('toastDot'); d.style.background = color || 'var(--live)'; d.style.boxShadow = '0 0 8px ' + (color || 'var(--live)'); $('toast').classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => $('toast').classList.remove('on'), 2600); }
+
+  /* ======================= ✨ AI (AI features, through the configured service endpoint) ======================= */
+  const AI_EXAMPLES = ['Thanksgiving dinner: slow cranberry & amber candlelight', 'Team colors for the big game, bright green & navy energy', 'Snowy blue evening, very calm', 'Haunted house flicker for Halloween', 'Christmas Eve warm twinkle, no white', 'Calm ocean night', 'Something wild I’ve never seen'];
+  let aiViews = [], aiLooks = [];
+  $('aiChips').innerHTML = AI_EXAMPLES.map(t => '<button>' + esc(t) + '</button>').join('');
+  $('aiChips').onclick = e => { const b = e.target.closest('button'); if (b) { $('aiPrompt').value = b.textContent; $('aiPrompt').focus(); } };
+  function openAI() { $('aiModal').hidden = false; setTimeout(() => $('aiPrompt').focus(), 30); }
+  function closeAI() { $('aiModal').hidden = true; aiViews.forEach(v => { const i = allViews.indexOf(v); if (i >= 0) allViews.splice(i, 1); }); aiViews = []; }
+  $('aiBtn').onclick = openAI; $('aiClose').onclick = closeAI;
+  $('aiModal').addEventListener('mousedown', e => { if (e.target === $('aiModal')) closeAI(); });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && !$('aiModal').hidden) { e.stopPropagation(); closeAI(); } }, true);
+  $('aiPrompt').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) $('aiGo').click(); });
+  const aiP = lk => ({ fx: lk.fx, sx: lk.sx, ix: lk.ix, c1: lk.c1, c2: lk.c2, c3: lk.c3, o1: lk.o1, o2: false, o3: false, pal: lk.pal, col: lk.col, spc: lk.spc, bri: lk.bri });
+  $('aiGo').onclick = async () => {
+    const prompt = $('aiPrompt').value.trim(); if (!prompt) return $('aiPrompt').focus();
+    $('aiGo').disabled = true; $('aiStat').innerHTML = '<span class="aispin"></span>The AI service is designing 4 looks for your house…';
+    try {
+      const r = await fetch('/api/ai/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, n: 4 }) }).then(r => r.json());
+      if (!r.ok) throw new Error(r.error || 'AI error');
+      aiLooks = r.looks; closeAI(); $('aiModal').hidden = false;
+      $('aiRes').innerHTML = aiLooks.map((lk, i) => '<div class="aicard"><canvas data-ai="' + i + '"></canvas><div class="m"><b>' + esc(lk.name) + '</b><p>' + esc(lk.desc) + '</p><small>' + esc((WL.effects[lk.fx] || TLFX?.names?.[lk.fx] || 'Effect ' + lk.fx) + ' · ' + (CAT_LABEL[lk.category] || lk.category)) + ' — ' + esc(lk.why) + '</small><button class="use" data-use="' + i + '">Use this one →</button></div></div>').join('');
+      $('aiRes').querySelectorAll('canvas[data-ai]').forEach(cv => { const v = makeView(cv, CROP_CARD, 1.6, 1.5); v.P = aiP(aiLooks[+cv.dataset.ai]); aiViews.push(v); });
+      $('aiStat').textContent = 'Pick one to keep and tweak, or change the description and try again.';
+    } catch (err) { $('aiStat').textContent = '⚠️ ' + err.message; }
+    $('aiGo').disabled = false;
+  };
+  $('aiRes').addEventListener('click', e => {
+    const b = e.target.closest('[data-use]'); if (!b) return;
+    const lk = aiLooks[+b.dataset.use];
+    if (!CAT_LABEL['c-ai']) { APP.cats.push(['c-ai', 'AI made', '✨']); CAT_LABEL['c-ai'] = 'AI made'; save(['cats']); }
+    const id = 'ai-' + Date.now().toString(36);
+    APP.userLooks.unshift({ id, name: lk.name, cats: ['mine', 'c-ai', lk.category], desc: lk.desc, fx: lk.fx, labels: Object.fromEntries(Object.entries(lk.labels || {}).filter(([, v]) => v)), P: aiP(lk), ai: { prompt: $('aiPrompt').value.trim(), why: lk.why } });
+    save(['userLooks', 'cats']); buildLooks(); renderNav(); renderGallery(true); closeAI();
+    openEdit(id, null); toast('Saved “' + lk.name + '” to Saved looks · tweak it here', 'var(--accent)');
+  });
+  // editor: ask the AI service to change the look being previewed
+  function renderAITweak() {
+    if (!state.edit) return;
+    const d = document.createElement('div'); d.className = 'aitweak';
+    d.innerHTML = '<label>✨ Ask AI to change this look</label><div class="r"><input id="aiTw" placeholder="e.g. slower, more red, twinkle on every 3rd bulb"><button id="aiTwGo">Change</button></div><div class="s" id="aiTwS"></div>';
+    $('ctrls').appendChild(d);
+    $('aiTw').onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter') $('aiTwGo').click(); };
+    $('aiTwGo').onclick = async () => {
+      const prompt = $('aiTw').value.trim(); if (!prompt) return $('aiTw').focus();
+      $('aiTwGo').disabled = true; $('aiTwS').innerHTML = '<span class="aispin"></span>The AI service is reworking it…';
+      try {
+        const r = await fetch('/api/ai/tweak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, P: state.edit.P, name: BY_ID[state.edit.id].name }) }).then(r => r.json());
+        if (!r.ok) throw new Error(r.error || 'AI error');
+        const old = state.edit.P;
+        state.edit.P = bakeMaster(upgradeP(aiP(r.look)));
+        if (old.cmode === 'bulb') { const nc = visibleColors(state.edit.P); let k = 0; state.edit.P.cmode = 'bulb'; state.edit.P.seq = old.seq.map(e => e.c ? { c: nc[k++ % nc.length].slice(), n: e.n } : { c: null, n: e.n }); }
+        state.edit.locks = []; resetStage();
+        renderControls(); changed();
+        toast('Preview updated: ' + (r.look.why || 'done') + '  ·  Push when you like it', 'var(--accent)');
+      } catch (err) { const s = $('aiTwS'); if (s) s.textContent = '⚠️ ' + err.message; }
+      const g = $('aiTwGo'); if (g) g.disabled = false;
+    };
+  }
+
+  /* ======================= 🌙 schedule (controller timers do WHEN; the Studio server loads WHAT into preset 240) ======================= */
+  const LOCATION = window.TLSettings.read(), HOME = { lat: LOCATION.lat == null ? null : Number(LOCATION.lat), lon: LOCATION.lon == null ? null : Number(LOCATION.lon) };
+  const PS_TONIGHT = 240, PS_NIGHT = 241, PS_OFF = 242, PS_MORNING = 243;
+  APP.schedule = Object.assign({ onMode: 'sunset', onOffset: 0, onTime: '17:00', eveLook: 'current', nightOn: true, nightTime: '21:30', nightTimeWE: '21:30', nightMode: 'dim', nightLook: 'porch-glow-twinkle', nightBri: 10, nightFade: 5, offMode: 'sunrise', offTime: '01:00', programs: [] }, APP.schedule || {});
+  const SC = APP.schedule; SC.programs = SC.programs || [];
+  if (!SC.nightTimeWE) SC.nightTimeWE = SC.nightTime;
+  // the controller gamma-corrects brightness (cfg light.gc.bri), so a raw 26 is far below 10% of the light; map % of light output to the slider value
+  const pct2bri = p => clamp(Math.round(255 * Math.pow(clamp(p, 0, 100) / 100, 1 / 2.8)), 1, 255);
+  const fmt12 = hhmm => { const [h, m] = hhmm.split(':').map(Number); return ((h + 11) % 12 + 1) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM'); };
+  const toHM = d => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  // NOAA-style sunrise/sunset (good to a minute or two)
+  function sunTimes(date) {
+    const rad = Math.PI / 180, day = Math.floor((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(date.getFullYear(), 0, 0)) / 864e5);
+    const g = 2 * Math.PI / 365 * (day - 1), eq = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
+    const dec = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g) + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
+    const ha = Math.acos(Math.cos(90.833 * rad) / (Math.cos(HOME.lat * rad) * Math.cos(dec)) - Math.tan(HOME.lat * rad) * Math.tan(dec)) / rad;
+    const at = mins => { const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) + mins * 6e4); return d; };
+    return { rise: at(720 - 4 * (HOME.lon + ha) - eq), set: at(720 - 4 * (HOME.lon - ha) - eq) };
+  }
+  const bodyOf = id => { if (plName(id)) { const pl = plById(id.slice(3)); return pl && pl.items.length ? plBody(pl) : null; } return id && BY_ID[id] ? Object.assign(wledBody(applyMaster(BY_ID[id].P)), { transition: clamp(Math.round((APP.fade?.sched ?? 2) * 10), 0, 6000) }) : null; };
+  const nameOf = id => BY_ID[id]?.name || plName(id);
+  const lookSel = (sel, val, withCurrent) => { sel.innerHTML = (withCurrent ? '<option value="current">Whatever I last pushed</option>' : '') + LOOKS.map(l => '<option value="' + l.id + '">' + esc(l.name) + '</option>').join('') + (APP.playlists.length ? '<optgroup label="Playlists">' + APP.playlists.map(pl => '<option value="pl:' + pl.id + '">▶ ' + esc(pl.name) + '</option>').join('') + '</optgroup>' : ''); sel.value = val; };
+  const iso = d => d.toISOString().slice(0, 10);
+  function nthWeekday(y, m, wd, n) { const d = new Date(y, m, 1); while (d.getDay() !== wd) d.setDate(d.getDate() + 1); d.setDate(d.getDate() + 7 * (n - 1)); return d; }
+  function quickPrograms() {
+    const now = new Date(), y = now.getMonth() >= 10 ? now.getFullYear() : now.getFullYear(), tg = nthWeekday(y, 10, 4, 4);
+    const add = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+    return [
+      ['Thanksgiving week', iso(add(tg, -3)), iso(add(tg, 3)), 'thanksgiving-table'],
+      ['Thanksgiving Day', iso(tg), iso(tg), 'harvest-candlelight'],
+      ['Christmas season', iso(new Date(y, 11, 1)), iso(new Date(y + 1, 0, 1)), 'trimlight-christmas'],
+      ['Christmas Eve & Day', iso(new Date(y, 11, 24)), iso(new Date(y, 11, 25)), 'christmas-twinkle'],
+      ['Hanukkah', y === 2026 ? '2026-12-04' : iso(new Date(y, 11, 14)), y === 2026 ? '2026-12-12' : iso(new Date(y, 11, 22)), 'hanukkah-shimmer'],
+      ['New Year’s Eve', iso(new Date(y, 11, 31)), iso(new Date(y + 1, 0, 1)), 'fireworks'],
+      ['Valentine’s', iso(new Date(y + 1, 1, 14)), iso(new Date(y + 1, 1, 14)), 'valentine-glow'],
+      ['Fourth of July', iso(new Date(y + 1, 6, 4)), iso(new Date(y + 1, 6, 4)), 'fourth-of-july'],
+      ['Halloween week', iso(new Date(y + 1, 9, 25)), iso(new Date(y + 1, 9, 31)), 'halloween-flicker'],
+    ];
+  }
+  function renderPrograms() {
+    $('progs').innerHTML = SC.programs.length ? SC.programs.map((p, i) =>
+      '<div class="prog" data-i="' + i + '"><input type="checkbox" data-k="on"' + (p.on !== false ? ' checked' : '') + ' title="On"><input type="text" data-k="name" value="' + esc(p.name) + '"><input type="date" data-k="start" value="' + p.start + '"><input type="date" data-k="end" value="' + p.end + '"><select data-k="look"></select><button class="x" data-del="' + i + '" title="Remove">×</button></div>').join('')
+      : '<p class="sh">No programs yet. Add one below.</p>';
+    $('progs').querySelectorAll('.prog').forEach(r => lookSel(r.querySelector('select'), SC.programs[+r.dataset.i].look, false));
+    const have = new Set(SC.programs.map(p => p.name));
+    $('progQuick').innerHTML = quickPrograms().filter(q => !have.has(q[0])).map((q, i) => '<button data-q="' + i + '">＋ ' + esc(q[0]) + '</button>').join('') + '<button data-q="custom">＋ Custom</button>';
+  }
+  $('progs').addEventListener('input', e => { const r = e.target.closest('.prog'); if (!r) return; const p = SC.programs[+r.dataset.i], k = e.target.dataset.k; p[k] = e.target.type === 'checkbox' ? e.target.checked : e.target.value; refreshNights(); });
+  $('progs').addEventListener('click', e => { const d = e.target.closest('[data-del]'); if (d) { SC.programs.splice(+d.dataset.del, 1); renderPrograms(); refreshNights(); } });
+  $('progQuick').addEventListener('click', e => {
+    const b = e.target.closest('[data-q]'); if (!b) return;
+    if (b.dataset.q === 'custom') { const t = iso(new Date()); SC.programs.push({ name: 'My program', start: t, end: t, look: houseLookId() || 'autumn-twinkle', on: true }); }
+    else { const q = quickPrograms().filter(x => !SC.programs.some(p => p.name === x[0]))[+b.dataset.q]; SC.programs.push({ name: q[0], start: q[1], end: q[2], look: q[3], on: true }); }
+    renderPrograms(); refreshNights();
+  });
+  function fillSchedule() {
+    lookSel($('eveLook'), SC.eveLook, true); lookSel($('nightLook'), SC.nightLook, false);
+    document.querySelectorAll('input[name=onMode]').forEach(r => r.checked = r.value === SC.onMode);
+    document.querySelectorAll('input[name=nightMode]').forEach(r => r.checked = r.value === SC.nightMode);
+    document.querySelectorAll('input[name=offMode]').forEach(r => r.checked = r.value === SC.offMode);
+    $('onOffset').value = SC.onOffset; $('onTime').value = SC.onTime; $('nightOn').checked = SC.nightOn; $('nightTime').value = SC.nightTime; $('nightTimeWE').value = SC.nightTimeWE;
+    $('nightBri').value = SC.nightBri; $('nightBriO').textContent = SC.nightBri + '%'; $('nightFade').value = SC.nightFade; $('offTime').value = SC.offTime;
+    $('nightLookRow').style.display = SC.nightMode === 'look' ? '' : 'none';
+    renderPrograms();
+  }
+  function readSchedule() {
+    const v = n => (document.querySelector('input[name=' + n + ']:checked') || {}).value;
+    Object.assign(SC, { onMode: v('onMode'), onOffset: clamp(+$('onOffset').value || 0, -59, 59), onTime: $('onTime').value || '17:00', eveLook: $('eveLook').value, nightOn: $('nightOn').checked, nightTime: $('nightTime').value || '21:30', nightTimeWE: $('nightTimeWE').value || $('nightTime').value || '21:30', nightMode: v('nightMode'), nightLook: $('nightLook').value, nightBri: +$('nightBri').value, nightFade: +$('nightFade').value, offMode: v('offMode'), offTime: $('offTime').value || '01:00' });
+    // bodies = the exact WLED settings for each look the schedule uses (the server loads them into preset 240)
+    SC.default = SC.eveLook === 'current' ? { look: 'current', name: 'Whatever you last pushed', body: null } : { look: SC.eveLook, name: nameOf(SC.eveLook), body: bodyOf(SC.eveLook) };
+    SC.programs.forEach(p => { p.lookName = nameOf(p.look); p.body = bodyOf(p.look); });
+  }
+  $('schedule').addEventListener('input', e => {
+    if (e.target.id === 'nightBri') $('nightBriO').textContent = e.target.value + '%';
+    if (e.target.name === 'nightMode') $('nightLookRow').style.display = e.target.value === 'look' ? '' : 'none';
+    if (e.target.closest('.schcard') && !e.target.closest('#progs')) { readSchedule(); refreshNights(); }
+  });
+  const nightKey = d => { const w = d.getDay(); return (w === 5 || w === 6) ? SC.nightTimeWE : SC.nightTime; };   // Fri & Sat nights
+  // which look plays on a date: same rules as scheduler.py (game day > latest-starting program > usual look)
+  function nightFor(d) {
+    const k = iso(new Date(d.getTime() - d.getTimezoneOffset() * 6e4));
+    let best = null; SC.programs.forEach(p => { if (p.on !== false && p.start <= k && k <= p.end && (!best || p.start > best.start)) best = p; });
+    if (best) return { look: best.look, why: best.name, src: 'program' };
+    return { look: SC.eveLook === 'current' ? (houseLookId() || APP.lastPush?.id) : SC.eveLook, why: 'Usual look', src: 'default' };
+  }
+  let vTonight = null;
+  function refreshNights() {
+    const today = new Date(); today.setHours(12, 0, 0, 0);
+    const cards = [];
+    for (let i = 0; i < 21; i++) {
+      const d = new Date(today); d.setDate(d.getDate() + i);
+      const n = nightFor(d), l = BY_ID[n.look], st = sunTimes(d);
+      cards.push('<div class="nt' + (i === 0 ? ' today' : '') + '" data-look="' + (n.look || '') + '"><small>' + (i === 0 ? 'Tonight' : d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })) + '</small><b>' + esc(l ? l.name : (nameOf(n.look) || '—')) + '</b><div class="sw">' + (l ? swatchesOf(l.P).map(c => '<i style="background:' + hex(c) + '"></i>').join('') : '') + '</div><em class="' + n.src + '">' + esc(n.why) + '</em><small>' + (SC.onMode === 'sunset' ? fmt12(toHM(new Date(st.set.getTime() + SC.onOffset * 6e4))) : SC.onMode === 'time' ? fmt12(SC.onTime) : '—') + (SC.nightOn ? ' · 🌙 ' + fmt12(nightKey(d)) : '') + '</small></div>');
+    }
+    $('nights').innerHTML = cards.join('');
+    // tonight panel
+    const n = nightFor(today), l = BY_ID[n.look], st = sunTimes(new Date()), tomorrow = sunTimes(new Date(Date.now() + 864e5));
+    $('tName').textContent = l ? l.name : (nameOf(n.look) || '—'); $('tWhy').textContent = n.src === 'default' ? 'Tonight · usual look' : 'Tonight · ' + n.why;
+    vTonight.P = l ? applyMaster(l.P) : null;
+    const onAt = SC.onMode === 'sunset' ? toHM(new Date(st.set.getTime() + SC.onOffset * 6e4)) : SC.onMode === 'time' ? SC.onTime : null;
+    const rows = [];
+    if (onAt) rows.push([fmt12(onAt), '#62d682', 'On' + (SC.onMode === 'sunset' ? ' at sunset' + (SC.onOffset ? ' ' + (SC.onOffset > 0 ? '+' : '') + SC.onOffset + ' min' : '') : '') + ' · ' + (l ? l.name : 'look')]);
+    if (SC.nightOn) rows.push([fmt12(nightKey(today)), '#7a8cff', (SC.nightMode === 'dim' ? 'Dims to ' + SC.nightBri + '%' : 'Switches to ' + (BY_ID[SC.nightLook]?.name || 'a calmer look') + ' at ' + SC.nightBri + '%') + (SC.nightFade ? ' over ' + SC.nightFade + ' min' : '')]);
+    if (SC.offMode === 'sunrise') rows.push([fmt12(toHM(tomorrow.rise)), '#6f8175', 'Off at sunrise']);
+    else if (SC.offMode === 'time') rows.push([fmt12(SC.offTime), '#6f8175', 'Off']);
+    else rows.push(['—', '#6f8175', 'Stays on (dimmed) until the next evening']);
+    $('tLine').innerHTML = rows.map(r => '<div class="tl"><b>' + r[0] + '</b><i style="background:' + r[1] + ';box-shadow:0 0 10px ' + r[1] + '"></i><span>' + esc(r[2]) + '</span></div>').join('');
+  }
+  $('nights').addEventListener('click', e => { const c = e.target.closest('[data-look]'); if (c && BY_ID[c.dataset.look]) openEdit(c.dataset.look, null); });
+  async function openSchedule() {
+    showRoute('schedule'); history.replaceState(null, '', location.href.split('#')[0] + '#schedule');
+    if (!vTonight) vTonight = makeView($('tonightCv'), CROP_CARD, 1.4, 2);
+    fillSchedule();
+    refreshNights();
+    try { const i = await wget('/json/info'), c = await wget('/json/cfg'), on = (c.timers?.ins || []).filter(t => t.en && t.macro).length; $('clockInfo').textContent = 'Controller clock ' + (i.time || '?') + ' · ' + on + ' timer' + (on === 1 ? '' : 's') + ' active · internet time ' + (c.if?.ntp?.en ? 'on' : 'off'); } catch { $('clockInfo').textContent = ''; }
+  }
+  $('schBack').onclick = () => goLibrary();
+  function bedtimeBody() {
+    const tt = SC.nightFade * 600;                     // WLED transition is in 100 ms steps
+    if (SC.nightMode === 'look' && BY_ID[SC.nightLook]) return Object.assign(wledBody(applyMaster(BY_ID[SC.nightLook].P)), { bri: pct2bri(SC.nightBri), transition: tt });
+    return { on: true, bri: pct2bri(SC.nightBri), transition: tt };
+  }
+  const hm = s => s.split(':').map(Number);
+  $('schSave').onclick = async () => {
+    readSchedule();
+    const btn = $('schSave'); btn.disabled = true; $('schStat').innerHTML = '<span class="aispin"></span>Writing to the controller…';
+    try {
+      if (window.TL_REAL_WLED && SC.programs.some(p => p.on !== false)) throw new Error('Date-range calendar programs need a scheduler service and are not applied in direct WLED mode. Remove them, then save the nightly schedule.');
+      await flushPalettes();   // custom palettes used by scheduled looks
+      for (const id of new Set([SC.eveLook, ...SC.programs.map(p => p.look)].filter(plName))) { const pl = plById(id.slice(3)); if (pl) await writePlaylist(pl); }
+      await fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) });
+      const before = await wget('/json/state'), pause = ms => new Promise(r => setTimeout(r, ms));
+      const ntp = { en: true };
+      if (Number.isFinite(HOME.lat) && Number.isFinite(HOME.lon)) { ntp.ln = HOME.lon; ntp.lt = HOME.lat; }
+      await cfgPatch({ if: { ntp } });
+      await wpost({ time: Math.floor(Date.now() / 1000) }); await pause(600);
+      // bedtime + off are stored commands ("o": true); WLED runs each as it saves it, so we restore afterwards
+      if (SC.nightOn) { await wpost(Object.assign(bedtimeBody(), { psave: PS_NIGHT, n: 'Schedule · Bedtime', o: true })); await pause(1000); }
+      await wpost({ on: false, transition: 50, psave: PS_OFF, n: 'Schedule · Off', o: true }); await pause(1000);
+      // timers: regular first, then sunrise (hour 255), then sunset (hour 254: WLED 16 marks sunset this way; 0.15 told them apart by order)
+      const ins = [], T = (t, macro, dow) => { const [h, m] = hm(t); ins.push({ en: 1, hour: h, min: m, macro, dow }); };
+      if (SC.onMode === 'time') T(SC.onTime, PS_TONIGHT, 127);
+      if (SC.nightOn) { if (SC.nightTime === SC.nightTimeWE) T(SC.nightTime, PS_NIGHT, 127); else { T(SC.nightTime, PS_NIGHT, 79); T(SC.nightTimeWE, PS_NIGHT, 48); } }   // Sun–Thu / Fri–Sat
+      if (SC.offMode === 'time') T(SC.offTime, PS_OFF, 127);
+      const reapply = [];
+      if (SC.nightOn) {   // re-apply bedtime every hour overnight, so a restart or WiFi drop (boot = full look) snaps back within the hour
+        const nt = t => { const [h, m] = hm(t); return ((h * 60 + m) - 720 + 1440) % 1440; };   // minutes since noon
+        const bed = [SC.nightTime, SC.nightTimeWE].map(nt).sort((a, b) => b - a)[0], end = nt(SC.offMode === 'time' ? SC.offTime : '05:00'), [, bm] = hm(SC.nightTime);
+        for (let h = 0; h < 24; h++) { const t = ((h * 60 + bm) - 720 + 1440) % 1440; if (t > bed && t < end) reapply.push({ en: 1, hour: h, min: bm, macro: PS_NIGHT, dow: 127 }); }
       }
       reapply.sort((a, b) => ((a.hour + 12) % 24) - ((b.hour + 12) % 24)); ins.push(...reapply);   // after the must-have timers (game day etc.), earliest first
       if (!V16 && ins.length > 8) ins.splice(8);   // WLED 0.15 has 8 regular timer slots (the last hourly bedtime re-applies are dropped)
