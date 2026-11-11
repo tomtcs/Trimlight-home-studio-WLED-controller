@@ -176,11 +176,31 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
-        if path not in ("/api/app", "/api/settings"):
+        if path not in ("/api/app", "/api/settings", "/api/restore"):
             self.send_json({"ok": False, "error": "Not found"}, 404)
             return
         try:
             incoming = self.body()
+            if path == "/api/restore":
+                if not isinstance(incoming, dict) or incoming.get("format") != "trimlight-home-studio-wled-backup" or incoming.get("version") != 1:
+                    raise ValueError("This is not a supported Trimlight Home Studio WLED backup.")
+                app = incoming.get("application")
+                if not isinstance(app, dict):
+                    raise ValueError("Backup application data must be a JSON object.")
+                for key, expected in (("userLooks", list), ("roofSections", list), ("playlists", list), ("schedule", dict), ("edits", dict), ("starred", dict)):
+                    if key in app and not isinstance(app[key], expected):
+                        raise ValueError("Backup application data has an invalid " + key + " value.")
+                settings = validate_settings(incoming.get("controller"))
+                # Validate serializability and reject NaN/Infinity before any database writes.
+                serialized_app = json.dumps(app, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+                serialized_settings = json.dumps(settings, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+                if len(serialized_app.encode("utf-8")) + len(serialized_settings.encode("utf-8")) > MAX_BODY:
+                    raise ValueError("Backup data exceeds the 8 MB storage limit.")
+                with database() as conn:
+                    write_state(conn, "app", app)
+                    write_state(conn, "settings", settings)
+                self.send_json({"ok": True})
+                return
             with database() as conn:
                 if path == "/api/app":
                     if not isinstance(incoming, dict):
