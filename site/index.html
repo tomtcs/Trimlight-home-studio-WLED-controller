@@ -671,6 +671,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 <script src="simple.js"></script>
 <script src="ask.js"></script>
 <script src="demo-data.js"></script>
+<script src="wled-settings.js"></script>
 <script src="demo-shim.js"></script>
 <script src="app.js"></script>
 
@@ -688,7 +689,7 @@ body:before{content:"";position:fixed;inset:0 0 auto;height:5px;background:var(-
 @media (max-width:820px){.narrow{display:block;position:fixed;inset:0;z-index:70;background:#0b0e0d;color:#f4f7f5;padding:max(16px,env(safe-area-inset-left,0px));font:15px/1.5 Inter,system-ui,sans-serif}
 .narrow div{max-width:420px;margin:18vh auto 0;display:flex;flex-direction:column;gap:12px}.narrow h1{font:600 24px "Space Grotesk",Inter,sans-serif;margin:0;text-wrap:balance}.narrow p{margin:0;color:#98a79d}.narrow img{border-radius:14px;max-width:100%}}
 </style>
-<div class="demotag" role="note"><b>DEMO</b><span>A pretend roof: Push lights up the picture, not a real house. Changes stay in your browser.</span><button type="button" onclick="location.hash='wiring'">Wiring &amp; setup</button><button type="button" onclick="__demoReset()">Reset demo</button></div>
+<div class="demotag" id="modeBanner" role="status"><b>DEMO</b><span>A simulated controller · no physical lights are controlled</span></div>
 <div class="narrow"><div><img src="trimlight-logo.svg" alt="Trimlight"><h1>Trimlight Home Studio · WLED</h1><p>This WLED edition is a lighting app for a house roofline: a library of animated looks, an editor, sections, playlists and a nightly schedule. It needs a wider screen. Open the link on a laptop or desktop.</p></div></div>
 
 <style>
@@ -719,11 +720,21 @@ body:before{content:"";position:fixed;inset:0 0 auto;height:5px;background:var(-
 .wg code{font:13px ui-monospace,Menlo,monospace;background:#1b231e;border:1px solid rgba(45,56,49,.35);border-radius:6px;padding:1px 5px}
 .wg .note{color:#a9b4cf;max-width:72ch;margin:0}
 .wg .grid2{display:grid;grid-template-columns:1fr 1fr;gap:24px}
-@media (max-width:760px){.wg .grid2{grid-template-columns:1fr}.wg h1{font-size:25px}}
+.wled-settings{border:1px solid rgba(98,214,130,.28);background:#141a17;border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:14px}.wled-settings-head,.wled-connection,.wled-actions{display:flex;align-items:end;justify-content:space-between;gap:12px;flex-wrap:wrap}.wled-settings h2{margin:0}.wled-settings-head p{color:#98a79d;margin:5px 0 0}.wled-settings label{display:flex;flex-direction:column;gap:6px;color:#98a79d;font-size:12px;min-width:150px;flex:1}.wled-settings input,.wled-settings select{height:38px;border:1px solid rgba(71,94,77,.5);border-radius:8px;background:#0b0e0d;color:#f4f7f5;padding:0 10px;font:14px Inter,system-ui,sans-serif}.wled-settings [readonly]{color:#6f8175}.wled-connection{align-items:end}.wled-connection label{max-width:420px}.wled-location{display:grid;grid-template-columns:150px 150px 1fr;align-items:end;gap:8px}.wled-location p{margin:0 0 7px;color:#98a79d;font-size:12px}.wled-outputs{display:flex;flex-direction:column;gap:8px}.wled-output{display:grid;grid-template-columns:1.2fr .8fr .8fr .7fr;gap:8px;padding:10px;background:#101612;border-radius:10px}.wled-actions{justify-content:flex-end}.wled-status{min-height:20px;margin:0;color:#b9f4c9;font-size:13px}.wled-status.bad{color:#ff9c9c}.wled-caution{margin:0;color:#ecb9b3;font-size:12px;line-height:1.5}.wled-caution code{background:#0b0e0d;padding:2px 4px;border-radius:4px}
+@media (max-width:760px){.wg .grid2{grid-template-columns:1fr}.wg h1{font-size:25px}.wled-output{grid-template-columns:1fr 1fr}.wled-location{grid-template-columns:1fr 1fr}.wled-location p{grid-column:1/-1}.wled-connection .btn,.wled-actions .btn{flex:1}}
 </style>
 <section class="wg" id="wiringGuide" hidden aria-label="Wiring and setup guide">
   <div class="wg-in">
-    <div class="wg-top"><div><h1>Using WLED with roofline pixels</h1><p class="lede">A general setup checklist for compatible pixel systems. Controller terminals, pin assignments, voltage, pixel protocol, and power requirements vary by installation; verify every value against the equipment documentation.</p></div><button class="back" type="button" id="wgClose">← Back to the app</button></div>
+    <div class="wg-top"><div><h1>WLED connection &amp; setup</h1><p class="lede">Connect this browser to a WLED controller on the same local network, then confirm the number of LEDs and color order for each output.</p></div><button class="back" type="button" id="wgClose">← Back to the app</button></div>
+    <div class="wled-settings">
+      <div class="wled-settings-head"><div><h2>Controller connection</h2><p>Address and channel settings are stored in this browser only.</p></div><label>Mode<select id="wledMode"><option value="demo">Demo preview</option><option value="wled">Real WLED controller</option></select></label></div>
+      <div class="wled-connection"><label>Controller IP address or hostname<input id="wledAddress" type="text" placeholder="e.g. 192.168.1.50 or wled.local" autocomplete="url" spellcheck="false"></label><button class="btn" id="testWled" type="button">Test connection</button></div>
+      <div class="wled-location"><label>Latitude<input id="wledLatitude" type="number" min="-66.6" max="66.6" step="0.0001" placeholder="from WLED"></label><label>Longitude<input id="wledLongitude" type="number" min="-180" max="180" step="0.0001" placeholder="from WLED"></label><p>Used for local sunset previews and WLED sunset timers. The timezone remains the one configured in WLED.</p></div>
+      <div id="wledOutputs" class="wled-outputs"></div>
+      <div class="wled-actions"><button class="btn" id="demoReset" type="button">Reset demo</button><button class="btn push" id="applyWled" type="button">Apply settings &amp; connect</button></div>
+      <p id="wledStatus" class="wled-status" role="status" aria-live="polite">Choose demo mode or enter a WLED address and test the connection.</p>
+      <p class="wled-caution"><b>Network requirement:</b> WLED's browser API uses HTTP and WebSocket. Open this app over HTTP on the same trusted LAN; an HTTPS-hosted page cannot connect directly to WLED's unencrypted <code>ws://</code> socket. Never expose the controller API to the public internet.</p>
+    </div>
     <div class="grid2">
       <div><h2>Before connecting hardware</h2><ol><li>Record the current controller settings and label each low-voltage data run before disconnecting anything.</li><li>Confirm pixel voltage, protocol, color order, ground reference, and maximum current from the light and power-supply documentation.</li><li>Check that the WLED controller supports the required voltage and pixel protocol. Select output pins from that controller's documentation.</li><li>Calculate each run's pixel count and total load; set conservative power limits appropriate for the supply and wiring.</li></ol></div>
       <div><h2>Configure WLED</h2><ol><li>Set the LED type, color order, output pins, and pixel count for each run.</li><li>Configure the device name, network connection, time zone, and location only if a local schedule needs sunset timing.</li><li>Test each run at low brightness with a simple static color before trying animated effects.</li><li>Verify direction, grouping, spacing, and power behavior on the installed system before saving a schedule.</li></ol></div>
