@@ -4,4 +4,23 @@ services:
     container_name: trimlight-home-studio-wled
     ports:
       - "8080:80"
+    depends_on:
+      - api
     restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: trimlight-home-studio-wled-api
+    environment:
+      PORT: "8000"
+      STUDIO_DB: /data/studio.sqlite3
+    volumes:
+      - studio-data:/data
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+volumes:
+  studio-data:
