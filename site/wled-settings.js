@@ -3,18 +3,21 @@
   'use strict';
   const KEY = 'trimlight-home-studio-wled-v1';
   const ROUTES = [
-    [[0.12, 0.39], [0.28, 0.30], [0.44, 0.39]],
-    [[0.44, 0.39], [0.78, 0.40]],
-    [[0.10, 0.51], [0.42, 0.52]],
-    [[0.42, 0.52], [0.78, 0.52]]
+    [[0.12, 0.39], [0.28, 0.30], [0.44, 0.39]], [[0.44, 0.39], [0.78, 0.40]],
+    [[0.10, 0.51], [0.42, 0.52]], [[0.42, 0.52], [0.78, 0.52]],
+    [[0.10, 0.61], [0.42, 0.62]], [[0.42, 0.62], [0.78, 0.61]]
   ];
-  const DEFAULT_NAMES = ['Front gable', 'Main eave', 'Garage edge', 'Lower eave'];
+  const DEFAULT_NAMES = ['Front gable', 'Main eave', 'Garage edge', 'Lower eave', 'Porch line', 'Side eave'];
   const clone = x => JSON.parse(JSON.stringify(x));
   const read = () => {
+    if (window.TL_SERVER_STATE?.has_settings) return Object.assign({ mode: 'demo', host: '', outputs: [] }, window.TL_SERVER_STATE.settings || {});
     try { return Object.assign({ mode: 'demo', host: '', outputs: [] }, JSON.parse(localStorage.getItem(KEY) || '{}')); }
     catch { return { mode: 'demo', host: '', outputs: [] }; }
   };
-  const write = x => localStorage.setItem(KEY, JSON.stringify(x));
+  const write = x => {
+    if (window.TL_SERVER_STATE) { window.TL_SERVER_STATE.settings = x; window.TL_SERVER_STATE.has_settings = true; return; }
+    localStorage.setItem(KEY, JSON.stringify(x));
+  };
   const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   function hostOf(value) {
     let input = String(value || '').trim();
@@ -29,7 +32,7 @@
   function getLayout() {
     const s = read();
     if (s.mode !== 'wled' || !Array.isArray(s.outputs) || !s.outputs.length) return clone(window.DEMO_DATA.layout);
-    const outputs = s.outputs.slice(0, 4);
+    const outputs = s.outputs.slice(0, 6);
     let start = 0;
     return {
       photo: s.photo || 'demo-house.svg', photoSize: s.photoSize || [2000, 1500], nextId: outputs.length + 1,
@@ -44,9 +47,11 @@
   }
   const T = window.TLSettings = { key: KEY, read, write, hostOf, layout: getLayout, isReal: () => read().mode === 'wled' };
   function initUI() {
-  const mode = document.getElementById('wledMode'), addr = document.getElementById('wledAddress'), lat = document.getElementById('wledLatitude'), lon = document.getElementById('wledLongitude'), rows = document.getElementById('wledOutputs'), result = document.getElementById('wledStatus');
-  if (!mode || !addr || !rows || !result) return;
+  const mode = document.getElementById('wledMode'), addr = document.getElementById('wledAddress'), channelCount = document.getElementById('wledChannelCount'), lat = document.getElementById('wledLatitude'), lon = document.getElementById('wledLongitude'), rows = document.getElementById('wledOutputs'), result = document.getElementById('wledStatus');
+    if (!mode || !addr || !channelCount || !rows || !result) return;
   const setStatus = (message, bad = false) => { result.textContent = message; result.classList.toggle('bad', bad); };
+  let channelTouched = false;
+  channelCount.addEventListener('change', () => { channelTouched = true; const detected = rows.querySelectorAll('.wled-output').length; if (detected && detected !== Number(channelCount.value)) setStatus(`Selected ${channelCount.value} channels, but WLED currently reports ${detected} configured outputs. Configure the missing outputs and GPIO pins in WLED, then test again.`, true); });
   const htmlRow = (o, i) => {
     const order = String(o.order || 'GRB');
     const orders = ['RGB', 'RBG', 'GRB', 'GBR', 'BRG', 'BGR'];
@@ -86,7 +91,7 @@
     outputs.forEach((o, i) => {
       const pts = i === drawing ? draft : o.points;
       if (!pts?.length || !mapRect) return;
-      const hue = ['#62d682', '#7fb3ff', '#ffc46b', '#d99bff'][i % 4];
+      const hue = ['#62d682', '#7fb3ff', '#ffc46b', '#d99bff', '#ff7f9f', '#75d6d0'][i % 6];
       ctx.strokeStyle = hue; ctx.fillStyle = hue; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
       ctx.beginPath(); pts.forEach((p, k) => { const x = mapRect.x + p[0] * mapRect.w, y = mapRect.y + p[1] * mapRect.h; if (!k) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke();
       pts.forEach((p, k) => { const x = mapRect.x + p[0] * mapRect.w, y = mapRect.y + p[1] * mapRect.h; ctx.beginPath(); ctx.arc(x, y, k === 0 ? 6 : 4.5, 0, Math.PI * 2); ctx.fill(); });
@@ -121,7 +126,7 @@
     if (drawing < 0 || draft.length < 2) return;
     const row = rows.querySelector(`.wled-output[data-output="${drawing}"]`);
     row.dataset.points = JSON.stringify(draft); row.querySelector('[data-mapstat]').textContent = `${draft.length} points mapped`; row.querySelector('[data-trace]').textContent = 'Edit traced line';
-    drawing = -1; draft = []; finishMap.disabled = true; undoMap.disabled = true; setStatus('Roofline saved in this browser. Continue tracing other output channels.'); drawMap();
+    drawing = -1; draft = []; finishMap.disabled = true; undoMap.disabled = true; setStatus('Roofline mapping saved with the controller settings. Continue tracing other output channels.'); drawMap();
   });
   undoMap?.addEventListener('click', () => { draft.pop(); finishMap.disabled = draft.length < 2; undoMap.disabled = !draft.length; drawMap(); });
   photoInput?.addEventListener('change', () => {
@@ -141,14 +146,14 @@
   window.addEventListener('resize', drawMap);
   if (savedPhoto) drawPhoto(savedPhoto);
   function loadForm() {
-    const s = read(); mode.value = s.mode || 'demo'; addr.value = s.host || ''; lat.value = s.lat ?? ''; lon.value = s.lon ?? '';
+    const s = read(); mode.value = s.mode || 'demo'; addr.value = s.host || ''; channelCount.value = String([2, 4, 6].includes(Number(s.channelCount)) ? Number(s.channelCount) : ([2, 4, 6].includes(s.outputs?.length) ? s.outputs.length : 4)); lat.value = s.lat ?? ''; lon.value = s.lon ?? '';
     if (s.outputs?.length) drawRows(s.outputs);
     else if (s.mode === 'demo') drawRows(window.DEMO_DATA.layout.runs.map((r, i) => ({ name: r.name, leds: r.leds, pin: '', order: 'GRB' })));
     else drawRows([]);
     document.getElementById('applyWled').disabled = s.mode !== 'wled';
     document.getElementById('demoReset').hidden = s.mode === 'wled';
     const banner = document.getElementById('modeBanner');
-    if (banner) banner.innerHTML = s.mode === 'wled' ? '<b>WLED</b><span>Controller mode · settings stay in this browser</span>' : '<b>DEMO</b><span>A simulated controller · no physical lights are controlled</span>';
+    if (banner) banner.innerHTML = s.mode === 'wled' ? '<b>WLED</b><span>Controller mode · settings saved with this installation</span>' : '<b>DEMO</b><span>A simulated controller · no physical lights are controlled</span>';
   }
   mode.addEventListener('change', () => {
     const s = read();
@@ -171,11 +176,14 @@
       const si = await siRes.json(), cfg = await cfgRes.json(), info = si.info || {};
       const ins = cfg.hw?.led?.ins || [];
       if (!ins.length) throw new Error('WLED responded, but no LED outputs were found in /json/cfg.');
+      if (ins.length > 6) throw new Error(`WLED reports ${ins.length} outputs; this setup supports 2, 4, or 6 channels.`);
       const previous = readRows();
       drawRows(ins.map((x, i) => ({ name: previous[i]?.name || DEFAULT_NAMES[i] || `Output ${i + 1}`, pin: x.pin, leds: x.len, order: x.order || 'GRB', points: previous[i]?.points || [], reverse: previous[i]?.reverse })));
+      if (!channelTouched && [2, 4, 6].includes(ins.length)) channelCount.value = String(ins.length);
       if (cfg.if?.ntp) { lat.value = cfg.if.ntp.lt ?? ''; lon.value = cfg.if.ntp.ln ?? ''; }
       mode.value = 'wled'; document.getElementById('applyWled').disabled = false;
-      setStatus(`${info.name || 'WLED controller'} connected · ${info.leds?.count ?? cfg.hw.led.total ?? '?'} LEDs · ${ins.length} output channel${ins.length === 1 ? '' : 's'}. Review the per-channel counts, then apply and connect.`);
+      const selected = Number(channelCount.value), mismatch = selected !== ins.length;
+      setStatus(`${info.name || 'WLED controller'} connected · ${info.leds?.count ?? cfg.hw.led.total ?? '?'} LEDs · WLED reports ${ins.length} configured outputs; ${selected} selected.${mismatch ? ' Configure the missing outputs and GPIO pins in WLED before applying.' : ' Review the per-channel counts, then apply and connect.'}`, mismatch);
       window.__TLWLED_TEST = { host, info, cfg };
     } catch (e) {
       const message = e.name === 'AbortError' ? 'Connection timed out. Check the address and confirm this page is open over HTTP on the same LAN.' : `Could not connect: ${e.message || 'check the address, network, and WLED API access.'}`;
@@ -186,7 +194,9 @@
     let host, outputs;
     try {
       host = hostOf(addr.value); outputs = readRows();
-      if (!outputs.length || outputs.length > 4) throw new Error('WLED must report one to four output channels.');
+      const selectedChannels = Number(channelCount.value);
+      if (![2, 4, 6].includes(selectedChannels)) throw new Error('Select a 2-, 4-, or 6-channel controller.');
+      if (outputs.length !== selectedChannels) throw new Error(`You selected ${selectedChannels} channels, but WLED reports ${outputs.length} configured outputs. Configure all output entries and GPIO pins in WLED, then test again.`);
       const latitude = lat.value.trim() === '' ? null : Number(lat.value), longitude = lon.value.trim() === '' ? null : Number(lon.value);
       if ((latitude === null) !== (longitude === null)) throw new Error('Enter both latitude and longitude, or leave both blank to keep the WLED location.');
       if (latitude !== null && (!Number.isFinite(latitude) || latitude < -66.6 || latitude > 66.6 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180)) throw new Error('Enter a valid latitude (-66.6 to 66.6) and longitude (-180 to 180).');
@@ -210,23 +220,33 @@
         if (cfg.if.ntp.lt !== latitude || cfg.if.ntp.ln !== longitude) changed = true;
         cfg.if.ntp.lt = latitude; cfg.if.ntp.ln = longitude;
       }
-      const next = { mode: 'wled', host, outputs, lat: latitude, lon: longitude, photo: savedPhoto, photoSize };
+      const next = { mode: 'wled', host, channelCount: selectedChannels, outputs, lat: latitude, lon: longitude, photo: savedPhoto, photoSize };
       if (changed) {
         setStatus('Applying channel counts and color order to WLED…');
         const res = await fetch(`http://${host}/json/cfg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
         if (!res.ok) throw new Error(`WLED rejected the configuration (HTTP ${res.status}).`);
       }
+      const stored = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
+      if (!stored.ok) { const failure = await stored.json().catch(() => ({})); throw new Error(failure.error || `Server could not save the settings (HTTP ${stored.status}).`); }
       write(next);
       try { localStorage.removeItem('tlstudio-demo-v1'); } catch { }
       setStatus(changed ? 'Settings applied. WLED may restart; reconnecting…' : 'Settings saved. Connecting to WLED…');
       setTimeout(() => location.reload(), changed ? 3500 : 500);
     } catch (e) { setStatus(`Could not apply settings: ${e.message || e}`, true); }
   });
-  document.getElementById('demoReset').addEventListener('click', () => {
+  document.getElementById('demoReset').addEventListener('click', async () => {
     try { localStorage.removeItem('tlstudio-demo-v1'); } catch { }
-    write({ mode: 'demo', host: '', outputs: [] }); location.reload();
+    const next = { mode: 'demo', host: '', channelCount: 4, outputs: [], photo: '', photoSize: [2000, 1500] };
+    if (window.TL_SERVER_STATE) {
+      const saved = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
+      if (!saved.ok) return setStatus('Could not save demo mode to the server.', true);
+    }
+    write(next); location.reload();
   });
   loadForm(); drawMap();
+  if (window.TL_SERVER_STATE && !window.TL_SERVER_STATE.has_settings) {
+    try { const legacy = localStorage.getItem(KEY); if (legacy) fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: legacy }).then(r => { if (r.ok) localStorage.removeItem(KEY); }); } catch { }
+  }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initUI, { once: true }); else initUI();
 })();
