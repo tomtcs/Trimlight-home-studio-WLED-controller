@@ -43,7 +43,7 @@
   const N = LEDS.length;
 
   /* ---------------- persistent app state (server: data/app.json) ---------------- */
-  const APP = Object.assign({ userLooks: [], edits: {}, cats: [], starred: {}, roofSections: [], master: { speed: 100, bright: 100, spacing: 0, theme: '' }, perRow: 3, lastPush: null, history: [] }, getSync('/api/app'));
+  const APP = Object.assign({ userLooks: [], edits: {}, cats: [], starred: {}, roofSections: [], master: { speed: 100, bright: 100, spacing: 0, theme: '' }, perRow: 3, previewAnimations: true, lastPush: null, history: [] }, getSync('/api/app'));
   APP.roofSections = Array.isArray(APP.roofSections) ? APP.roofSections : [];
   let saveT = null; const pending = {};
   function save(keys) { keys.forEach(k => pending[k] = APP[k]); clearTimeout(saveT); saveT = setTimeout(() => { const b = Object.assign({}, pending); for (const k in pending) delete pending[k]; fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).catch(() => toast('Couldn’t save', 'var(--warn)')); }, 300); }
@@ -586,6 +586,18 @@
 
   /* ======================= EDIT PAGE ======================= */
   const vStage = makeView($('stageCv'), CROP_STAGE, 1, 2), vMini = makeView($('miniCv'), CROP_CARD, 1.5, 2), vPill = makeView($('pillCv'), { x: 0.02, y: 0.25, w: 0.78, h: 0.45 }, 1.4, 2);
+  function syncPreviewToggle() {
+    const button = $('previewToggle'), enabled = APP.previewAnimations !== false;
+    button.textContent = enabled ? '⏸ Pause previews' : '▶ Resume previews';
+    button.setAttribute('aria-pressed', String(enabled));
+    button.title = enabled ? 'Pause animated look thumbnails and freeze the live preview' : 'Resume animated look thumbnails and the live preview';
+  }
+  $('previewToggle').addEventListener('click', () => {
+    APP.previewAnimations = APP.previewAnimations === false;
+    save(['previewAnimations']); syncPreviewToggle();
+    cardViews.forEach(card => { card.v.dirty = true; }); vPill.dirty = true;
+  });
+  syncPreviewToggle();
   const ro = new ResizeObserver(() => { [vStage, vMini, vPill].forEach(v => v.resize()); cardViews.forEach(c => c.v.resize()); });
   [$('stageCv'), $('miniCv'), $('pillCv')].forEach(c => ro.observe(c));
   let pendingGhost = null;
@@ -1677,15 +1689,19 @@
   /* ======================= one shared animation loop ======================= */
   let frameN = 0;
   function frame(now) {
-    frameN++; if (frameN % 30 === 1) tlsTick();
-    const live = liveBuf(), lbri = WL.state ? (WL.state.on ? WL.state.bri : 0) : 255;
+    frameN++;
+    const previewMotion = APP.previewAnimations !== false;
+    if (frameN % 30 === 1 && (state.route !== 'gallery' || previewMotion)) tlsTick();
+    const needsLive = state.route !== 'gallery' || previewMotion || vPill.dirty;
+    const live = needsLive ? liveBuf() : null, lbri = WL.state ? (WL.state.on ? WL.state.bri : 0) : 255;
     if (state.route === 'gallery') {
       visibleCards.forEach(c => {
-        if (REDUCED ? c.v.dirty : ((frameN + c.phase) % 2 === 0 || c.v.dirty)) {
-          const P = applyMaster(BY_ID[c.id].P); drawHouse(c.v, renderLook(c.v, P, now + c.phase), P.bri);
+        if (c.v.dirty || (previewMotion && !REDUCED && (frameN + c.phase) % 2 === 0)) {
+          const P = applyMaster(BY_ID[c.id].P), previewTime = previewMotion ? now + c.phase : 0;
+          drawHouse(c.v, renderLook(c.v, P, previewTime), P.bri);
         }
       });
-      if (!REDUCED || vPill.dirty) drawHouse(vPill, live, lbri);
+      if (previewMotion ? (!REDUCED || vPill.dirty) : vPill.dirty) drawHouse(vPill, live, lbri);
     } else if (state.edit) {
       const P = editR(), buf = renderLook(vStage, P, now);
       drawHouse(vStage, highlight(P, buf), P.bri); drawOverlay(vStage, P); drawStrip(P, buf);
