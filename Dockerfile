@@ -1,6 +1,6 @@
 FROM nginx:1.27-alpine
 
-# Static site (self-contained demo: fake WLED controller + API run in the browser)
+# Static browser app with simulated demo mode and direct local WLED mode
 COPY site/ /usr/share/nginx/html/
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
