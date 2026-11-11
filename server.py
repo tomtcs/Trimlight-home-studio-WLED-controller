@@ -11,7 +11,8 @@ from urllib.parse import urlsplit
 
 DB_PATH = os.environ.get("STUDIO_DB", "/data/studio.sqlite3")
 MAX_BODY = 8 * 1024 * 1024
-DEFAULT_SETTINGS = {"mode": "demo", "host": "", "channelCount": 4, "outputs": [], "photo": "", "photoSize": [2000, 1500], "houseViews": {}}
+DEFAULT_HOUSE_SIDES = [{"id": "front", "label": "Front"}, {"id": "right", "label": "Right side"}, {"id": "rear", "label": "Rear"}, {"id": "left", "label": "Left side"}, {"id": "shed", "label": "Shed"}]
+DEFAULT_SETTINGS = {"mode": "demo", "host": "", "channelCount": 4, "outputs": [], "photo": "", "photoSize": [2000, 1500], "houseViews": {}, "houseSides": DEFAULT_HOUSE_SIDES}
 
 
 def connect():
@@ -61,8 +62,8 @@ def validate_settings(settings):
         raise ValueError("Controller channel count must be 2, 4, or 6.")
     if not isinstance(outputs, list) or len(outputs) > 6:
         raise ValueError("WLED settings support up to six output channels.")
-    if mode == "wled" and outputs and len(outputs) != channel_count:
-        raise ValueError("The selected channel count must match the configured WLED outputs.")
+    if len(outputs) > channel_count:
+        raise ValueError("Configured outputs cannot exceed the selected controller channel capacity.")
     total = 0
     for output in outputs:
         if not isinstance(output, dict):
@@ -83,10 +84,17 @@ def validate_settings(settings):
     if photo:
         if not isinstance(photo, str) or len(photo) > 2_300_000 or not re.match(r"^data:image/(jpeg|png|webp);base64,", photo):
             raise ValueError("The home photo must be a resized JPEG, PNG, or WebP image under the storage limit.")
+    house_sides = settings.get("houseSides", DEFAULT_HOUSE_SIDES)
+    if not isinstance(house_sides, list) or not 1 <= len(house_sides) <= 12:
+        raise ValueError("Configure between 1 and 12 house elevations.")
+    side_ids = set()
+    for side in house_sides:
+        if not isinstance(side, dict) or not isinstance(side.get("id"), str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", side["id"]) or side["id"] in side_ids or not isinstance(side.get("label"), str) or not 1 <= len(side["label"].strip()) <= 32:
+            raise ValueError("Each house elevation needs a unique identifier and a name from 1 to 32 characters.")
+        side_ids.add(side["id"])
     house_views = settings.get("houseViews", {})
-    allowed_sides = {"front", "right", "rear", "left", "shed"}
-    if not isinstance(house_views, dict) or set(house_views) - allowed_sides:
-        raise ValueError("House views must use front, right, rear, left, or shed.")
+    if not isinstance(house_views, dict) or set(house_views) - side_ids:
+        raise ValueError("House views must match the configured elevations.")
     photo_total = 0
     for side, view in house_views.items():
         if not isinstance(view, dict):
