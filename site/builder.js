@@ -296,7 +296,9 @@
   function zoneGroups() {
     const port = p => RUNS.map((r, i) => r.port === p ? i : -1).filter(i => i >= 0);
     const outputs = [...new Set(RUNS.map(r => r.port))].sort((a, b) => a - b).map(p => ['Output ' + p, port(p)]);
-    ZONE_GROUPS = [['Whole layout', allRuns()], ...outputs].filter(z => z[1].length);
+    const sections = (H?.sections?.() || []).filter(s => Number.isInteger(s.start) && Number.isInteger(s.stop) && s.start >= 0 && s.stop <= N && s.stop > s.start)
+      .map(s => [s.name, RUNS.map((r, i) => r.start >= s.start && r.start + r.len <= s.stop ? i : -1).filter(i => i >= 0), { start: s.start, len: s.stop - s.start, id: s.id }]);
+    ZONE_GROUPS = [['Whole layout', allRuns()], ...outputs, ...sections].filter(z => z[1].length || z[2]);
   }
   const RECIPES = {
     'Ember Comets': () => {
@@ -397,7 +399,10 @@
   function redo() { if (!fut.length) return; const s = fut.pop(); hist.push(s); LOOK = JSON.parse(s); afterHist(); }
   function afterHist() { if (sel !== 'look' && !layerById(sel)) sel = LOOK.layers[LOOK.layers.length - 1]?.id || 'look'; $('name').value = LOOK.name; renderAll(); syncUndo(); }
   function changed(full) { LOOK.dirty = true; snap(); if (full) renderAll(); else { renderLayers(); renderLanes(); renderJSON(); } }
-  function saveDraft() { try { localStorage.setItem('tls-builder-draft', JSON.stringify(LOOK)); } catch { } }
+  function saveDraft() {
+    if (H && H.saveDraft) { H.saveDraft(clone(LOOK)); return; }
+    try { localStorage.setItem('tls-builder-draft', JSON.stringify(LOOK)); } catch { }
+  }
 
   /* ---- knobs ---- */
   function numericParams(L) {
@@ -495,8 +500,8 @@
     }
     if (tab === 'colors') return colorsTab(L);
     if (tab === 'where') {
-      const cu = L.zone.custom && L.zone.custom.length, on = new Set(cu ? [] : L.zone.runs);
-      return (cu ? '<div class="note"><b>Custom range' + (L.zone.custom.length > 1 ? 's' : '') + ':</b> ' + L.zone.custom.map(r => 'bulbs ' + (r.start + 1) + '–' + (r.start + r.len)).join(', ') + ' (drawn on the layer lanes). <button class="btn sm" data-zclear style="margin-left:6px">Back to stretches</button></div>' : '<div class="note">Tip: you can also drag this layer’s edges right on its <b>layer lane</b> for exact bulbs.</div>') + '<div class="sub">Quick picks</div><div class="sgs" style="margin-bottom:12px">' + ZONE_GROUPS.map((gz, i) => '<button data-zg="' + i + '" class="' + (gz[1].length === on.size && gz[1].every(r => on.has(r)) ? 'on' : '') + '">' + esc(gz[0]) + '</button>').join('') + '</div>' +
+      const cu = L.zone.custom && L.zone.custom.length, on = new Set(cu ? [] : L.zone.runs), currentRanges = cu ? JSON.stringify(L.zone.custom) : '';
+      return (cu ? '<div class="note"><b>Custom range' + (L.zone.custom.length > 1 ? 's' : '') + ':</b> ' + L.zone.custom.map(r => 'bulbs ' + (r.start + 1) + '–' + (r.start + r.len)).join(', ') + ' (dragged on the layer lanes or selected from a saved roof section). <button class="btn sm" data-zclear style="margin-left:6px">Back to stretches</button></div>' : '<div class="note">Tip: drag this layer’s edges on its <b>layer lane</b>, or choose a saved roof section below.</div>') + '<div class="sub">Quick picks</div><div class="sgs" style="margin-bottom:12px">' + ZONE_GROUPS.map((gz, i) => '<button data-zg="' + i + '" class="' + (gz[2] ? currentRanges === JSON.stringify([gz[2]]) ? 'on' : '' : gz[1].length === on.size && gz[1].every(r => on.has(r)) ? 'on' : '') + '">' + esc(gz[0]) + (gz[2] ? ' · ' + (gz[2].start + 1) + '–' + (gz[2].start + gz[2].len) : '') + '</button>').join('') + '</div>' +
         '<div class="sub">Stretches of roof <span class="lbl" style="letter-spacing:.04em">' + L.zone.runs.reduce((a, r) => a + (RUNS[r]?.len || 0), 0) + ' bulbs</span></div><div class="zones">' + RUNS.map((r, i) => '<label class="zone' + (on.has(i) ? ' on' : '') + '"><input type="checkbox" data-run="' + i + '"' + (on.has(i) ? ' checked' : '') + '><span>' + esc(r.name) + '</span><small>' + r.len + ' · out ' + r.port + '</small></label>').join('') + '</div>' +
         '<div class="note" style="margin-top:10px">Neighbouring stretches join into one run, so a comet can travel round the corner. Separate stretches each get their own copy.</div>' +
         slider('zone.feather', 'Soft edges', L.zone.feather, 0, 20, 1, 'bulbs') +
@@ -619,7 +624,7 @@
     el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; renderInspector(); });
     el.querySelectorAll('[data-bl]').forEach(b => b.onclick = () => { L.blend = b.dataset.bl; changed(); renderInspector(); });
     el.querySelector('[data-zclear]')?.addEventListener('click', () => { delete L.zone.custom; changed(true); });
-    el.querySelectorAll('[data-zg]').forEach(b => b.onclick = () => { delete L.zone.custom; L.zone.runs = ZONE_GROUPS[+b.dataset.zg][1].slice(); changed(); renderInspector(); });
+    el.querySelectorAll('[data-zg]').forEach(b => b.onclick = () => { const z = ZONE_GROUPS[+b.dataset.zg]; if (z[2]) L.zone.custom = [{ start: z[2].start, len: z[2].len }]; else { delete L.zone.custom; L.zone.runs = z[1].slice(); } changed(); renderInspector(); });
     el.querySelectorAll('[data-run]').forEach(c => c.onchange = () => { const i = +c.dataset.run, s = new Set(L.zone.custom && L.zone.custom.length ? [] : L.zone.runs); delete L.zone.custom; c.checked ? s.add(i) : s.delete(i); if (!s.size) { c.checked = true; toast('A layer needs at least one stretch of roof', 'var(--warn)'); return; } L.zone.runs = [...s].sort((a, b) => a - b); if (segCount({ stack: LOOK }) > 32) { s.delete(i); L.zone.runs = [...s]; c.checked = false; toast('That would need more than the controller’s 32 segments', 'var(--warn)'); return; } changed(); renderInspector(); });
     el.querySelectorAll('[data-col]').forEach(c => { c.oninput = () => { L.src.col[+c.dataset.col] = unhex(c.value); changed(); }; c.onchange = () => renderInspector(); });
     el.querySelectorAll('[data-pal]').forEach(b => b.onclick = () => { L.src.pal = +b.dataset.pal; changed(); el.querySelectorAll('[data-pal]').forEach(x => x.classList.toggle('on', x === b)); });
@@ -949,7 +954,7 @@
   g.TLBuilder = {
     isStack, render, segments, matches, segCount, SHAPES, BLENDS, QUICK,
     make: { shape: (...a) => mkShape(...a), fx: (...a) => mkFx(...a), swToStops, ST },
-    zoneGroups: () => ZONE_GROUPS, runs: () => RUNS,
+    zoneGroups: () => ZONE_GROUPS, runs: () => RUNS, refreshZones: zoneGroups,
     init(host) {
       H = host; FXL = host.FXL; RUNS = host.runs().map(r => ({ name: r.name, port: r.port, start: r.start, len: r.stop - r.start })); N = host.N;
       zoneGroups();
@@ -965,7 +970,7 @@
       const l = id && H.lookById(id);
       if (l && isStack(l.P)) { if (!LOOK || LOOK.id !== l.id) { LOOK = Object.assign({ id: l.id, name: l.name, bri: l.P.bri ?? 200, fade: l.P.fade ?? 2, recipe: null }, clone(l.P.stack)); afterLoad(); } }
       else if (l) { LOOK = Object.assign({ id: null, name: l.name + ' (layers)', bri: l.P.bri ?? 180, fade: 2, recipe: null }, this.fromLook(l)); afterLoad(); }
-      else if (!LOOK) { let d = null; try { d = JSON.parse(localStorage.getItem('tls-builder-draft') || 'null'); } catch { } if (d && d.layers && d.layers.length) { LOOK = d; afterLoad(); LOOK.dirty = d.dirty; } else newLook('Ember Comets'); }
+      else if (!LOOK) { let d = H.loadDraft ? H.loadDraft() : null; if (!d) { try { d = JSON.parse(localStorage.getItem('tls-builder-draft') || 'null'); } catch { } if (d && H.saveDraft) H.saveDraft(clone(d)); } if (d && d.layers && d.layers.length) { LOOK = d; afterLoad(); LOOK.dirty = d.dirty; } else newLook('Ember Comets'); }
       else renderAll();
       syncFw(); SV.cw = 0; laneCvs.forEach(c => c.w = 0); setTimeout(drawTicks, 30);
       last = 0; if (!raf) raf = requestAnimationFrame(frame);
