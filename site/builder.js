@@ -444,7 +444,8 @@
 
   /* ---- layer list ---- */
   const srcLabel = L => L.src.kind === 'shape' ? SHAPES[L.src.type].name : fxName(L.src.fx);
-  function zoneLabel(L) { if (L.zone.custom && L.zone.custom.length) { const c = L.zone.custom; return c.length === 1 ? 'Bulbs ' + (c[0].start + 1) + '–' + (c[0].start + c[0].len) : c.length + ' custom ranges'; }
+  function rangeName(r) { const saved = (H?.sections?.() || []).find(s => s.start === r.start && s.stop === r.start + r.len); return saved?.name || ('Bulbs ' + (r.start + 1) + '–' + (r.start + r.len)); }
+  function zoneLabel(L) { if (L.zone.custom && L.zone.custom.length) { return L.zone.custom.map(rangeName).join(' + '); }
     return zoneLabelRuns(L); }
   function zoneLabelRuns(L) { const rs = L.zone.runs.slice().sort((a, b) => a - b); const gz = ZONE_GROUPS.find(z => z[1].length === rs.length && z[1].every((x, i) => x === rs[i])); return gz ? gz[0] : rs.length === 1 ? RUNS[rs[0]].name : rs.length + ' stretches'; }
   function renderLayers() {
@@ -498,11 +499,15 @@
         m.ctl.map(c => c.bool ? '<label class="chk"><input type="checkbox" data-c="src.' + c.k + '"' + (L.src[c.k] ? ' checked' : '') + '> ' + esc(c.label) + '</label>' : slider('src.' + c.k, c.label, L.src[c.k], 0, c.k === 'c3' ? 31 : 255, 1, '')).join('') +
         '<div class="note">These are the controller’s own sliders for <b>' + esc(fxName(L.src.fx)) + '</b>, so the preview matches the roof.</div>' + knobHint(L);
     }
-    if (tab === 'colors') return colorsTab(L);
+    if (tab === 'colors') return colorsTab(L) + '<div class="note">A color layer can cover several saved roof sections. For a solid color, keep one swatch; add another layer to paint a different selection a different color.</div>';
     if (tab === 'where') {
-      const cu = L.zone.custom && L.zone.custom.length, on = new Set(cu ? [] : L.zone.runs), currentRanges = cu ? JSON.stringify(L.zone.custom) : '';
-      return (cu ? '<div class="note"><b>Custom range' + (L.zone.custom.length > 1 ? 's' : '') + ':</b> ' + L.zone.custom.map(r => 'bulbs ' + (r.start + 1) + '–' + (r.start + r.len)).join(', ') + ' (dragged on the layer lanes or selected from a saved roof section). <button class="btn sm" data-zclear style="margin-left:6px">Back to stretches</button></div>' : '<div class="note">Tip: drag this layer’s edges on its <b>layer lane</b>, or choose a saved roof section below.</div>') + '<div class="sub">Quick picks</div><div class="sgs" style="margin-bottom:12px">' + ZONE_GROUPS.map((gz, i) => '<button data-zg="' + i + '" class="' + (gz[2] ? currentRanges === JSON.stringify([gz[2]]) ? 'on' : '' : gz[1].length === on.size && gz[1].every(r => on.has(r)) ? 'on' : '') + '">' + esc(gz[0]) + (gz[2] ? ' · ' + (gz[2].start + 1) + '–' + (gz[2].start + gz[2].len) : '') + '</button>').join('') + '</div>' +
-        '<div class="sub">Stretches of roof <span class="lbl" style="letter-spacing:.04em">' + L.zone.runs.reduce((a, r) => a + (RUNS[r]?.len || 0), 0) + ' bulbs</span></div><div class="zones">' + RUNS.map((r, i) => '<label class="zone' + (on.has(i) ? ' on' : '') + '"><input type="checkbox" data-run="' + i + '"' + (on.has(i) ? ' checked' : '') + '><span>' + esc(r.name) + '</span><small>' + r.len + ' · out ' + r.port + '</small></label>').join('') + '</div>' +
+      const cu = L.zone.custom && L.zone.custom.length, on = new Set(cu ? [] : L.zone.runs), currentRanges = cu ? JSON.stringify(L.zone.custom) : '', saved = ZONE_GROUPS.filter(z => z[2]);
+      const covers = r => (L.zone.custom || []).some(x => x.start <= r.start && x.start + x.len >= r.start + r.len);
+      const overlaps = r => (L.zone.custom || []).some(x => x.start < r.start + r.len && x.start + x.len > r.start);
+      const selections = (L.zone.custom || []).map(rangeName).join(', ');
+      const savedPickers = saved.length ? '<div class="sub">Your saved roof sections <span class="lbl" style="letter-spacing:.04em">select any number for this layer’s color</span></div><div class="sgs saved-zone-picks" style="margin-bottom:8px">' + saved.map(z => '<button type="button" data-saved-zone="' + z[2].id + '" class="' + (covers(z[2]) ? 'on' : overlaps(z[2]) ? 'partial' : '') + '" aria-pressed="' + covers(z[2]) + '">' + (covers(z[2]) ? '✓ ' : '＋ ') + esc(z[0]) + ' · ' + (z[2].start + 1) + '–' + (z[2].start + z[2].len) + '</button>').join('') + '</div><div class="note">To use different colors, add one layer per color. Select the sections for that color here, then set that layer’s swatch in <b>Colors</b>. A layer can cover several separate sections.</div>' : '<div class="note">No saved roof sections yet. Create bulb ranges in <b>Controller → Named roof sections</b>; then select them here as paint targets.</div>';
+      return (cu ? '<div class="note"><b>Selected:</b> ' + esc(selections) + ' <button class="btn sm" data-zclear style="margin-left:6px">Back to output stretches</button></div>' : '<div class="note">Choose the bulbs this color layer should cover. Named sections let you target physical roof areas even when their bulb numbers are out of order.</div>') + '<div class="sub">Quick picks</div><div class="sgs" style="margin-bottom:12px">' + ZONE_GROUPS.map((gz, i) => gz[2] ? '' : '<button data-zg="' + i + '" class="' + (gz[1].length === on.size && gz[1].every(r => on.has(r)) ? 'on' : '') + '">' + esc(gz[0]) + '</button>').join('') + '</div>' + savedPickers +
+        (cu ? '' : '<div class="sub">WLED output stretches</div><div class="zones">' + RUNS.map((r, i) => '<label class="zone' + (on.has(i) ? ' on' : '') + '"><input type="checkbox" data-run="' + i + '"' + (on.has(i) ? ' checked' : '') + '><span>' + esc(r.name) + '</span><small>' + r.len + ' · out ' + r.port + '</small></label>').join('') + '</div>') +
         '<div class="note" style="margin-top:10px">Neighbouring stretches join into one run, so a comet can travel round the corner. Separate stretches each get their own copy.</div>' +
         slider('zone.feather', 'Soft edges', L.zone.feather, 0, 20, 1, 'bulbs') +
         '<div class="ctl"><div class="r"><span>Lit bulbs</span></div>' + sgs('zone.pat', L.zone.grp + ':' + L.zone.spc, [['1:0', 'Every bulb'], ['1:1', '1 on 1 off'], ['1:2', '1 on 2 off'], ['2:2', '2 on 2 off'], ['3:1', '3 on 1 off']]) + '</div>' +
@@ -624,6 +629,21 @@
     el.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { tab = b.dataset.tab; renderInspector(); });
     el.querySelectorAll('[data-bl]').forEach(b => b.onclick = () => { L.blend = b.dataset.bl; changed(); renderInspector(); });
     el.querySelector('[data-zclear]')?.addEventListener('click', () => { delete L.zone.custom; changed(true); });
+    el.querySelectorAll('[data-saved-zone]').forEach(b => b.onclick = () => {
+      const z = ZONE_GROUPS.find(group => group[2]?.id === b.dataset.savedZone); if (!z) return;
+      const target = z[2], before = L.zone.custom?.map(r => ({ start: r.start, len: r.len })) || [], overlaps = before.some(r => r.start < target.start + target.len && r.start + r.len > target.start);
+      let next;
+      if (!overlaps) next = [...before, { start: target.start, len: target.len }].sort((a, c) => a.start - c.start);
+      else next = before.flatMap(r => {
+        const a = r.start, z1 = r.start + r.len, t0 = target.start, t1 = target.start + target.len;
+        if (t1 <= a || t0 >= z1) return [r];
+        return [...(t0 > a ? [{ start: a, len: t0 - a }] : []), ...(t1 < z1 ? [{ start: t1, len: z1 - t1 }] : [])];
+      });
+      if (!next.length) return toast('Keep at least one roof section selected for this layer.', 'var(--warn)');
+      L.zone.custom = next;
+      if (segCount({ stack: LOOK }) > 32) { L.zone.custom = before.length ? before : undefined; toast('That selection would need more than the controller’s 32 segments.', 'var(--warn)'); return; }
+      changed(); renderInspector();
+    });
     el.querySelectorAll('[data-zg]').forEach(b => b.onclick = () => { const z = ZONE_GROUPS[+b.dataset.zg]; if (z[2]) L.zone.custom = [{ start: z[2].start, len: z[2].len }]; else { delete L.zone.custom; L.zone.runs = z[1].slice(); } changed(); renderInspector(); });
     el.querySelectorAll('[data-run]').forEach(c => c.onchange = () => { const i = +c.dataset.run, s = new Set(L.zone.custom && L.zone.custom.length ? [] : L.zone.runs); delete L.zone.custom; c.checked ? s.add(i) : s.delete(i); if (!s.size) { c.checked = true; toast('A layer needs at least one stretch of roof', 'var(--warn)'); return; } L.zone.runs = [...s].sort((a, b) => a - b); if (segCount({ stack: LOOK }) > 32) { s.delete(i); L.zone.runs = [...s]; c.checked = false; toast('That would need more than the controller’s 32 segments', 'var(--warn)'); return; } changed(); renderInspector(); });
     el.querySelectorAll('[data-col]').forEach(c => { c.oninput = () => { L.src.col[+c.dataset.col] = unhex(c.value); changed(); }; c.onchange = () => renderInspector(); });
