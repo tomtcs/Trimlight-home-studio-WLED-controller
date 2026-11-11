@@ -4,7 +4,7 @@ A WLED-focused lighting interface for configuring output channels, previewing ef
 
 ## Run locally
 
-Use <code>docker compose up -d --build</code> and open <http://localhost:8080>. In **Wiring &amp; setup**, choose **Real WLED controller**, enter its IP address or <code>.local</code> hostname, then select **Test connection**. Review the detected output channels, LED counts, and color order. **Apply settings &amp; connect** writes changed LED counts and color order to WLED, then reconnects the app. Settings are stored in that browser. Optional latitude and longitude values update WLED's location while leaving its configured time zone unchanged.
+Use <code>docker compose up -d --build</code> and open <http://localhost:8080>. In **Wiring &amp; setup**, choose **Real WLED controller**, enter its IP address or <code>.local</code> hostname, then select **Test connection**. Review the detected output channels, LED counts, and color order. Upload a front-facing home photo, select **Trace roofline** for each WLED output, and click along the LED path in data-flow order; finish each path with **Finish line**. **Apply settings &amp; connect** writes changed LED counts and color order to WLED, then reconnects the app with the mapped roof geometry. Settings, photo, and traces are stored in that browser only; they are not uploaded to this repository. Optional latitude and longitude values update WLED's location while leaving its configured time zone unchanged.
 
 ## Network requirements
 
@@ -15,6 +15,7 @@ Never expose WLED's unauthenticated local API to the public internet. This app d
 ## Supported behavior and limits
 
 - Real mode reads the controller's effect metadata, palettes, state, and live WebSocket updates, and sends WLED state changes directly.
+- The roof mapper places each channel's LEDs along traced photo paths. Existing saved looks use the resulting LED layout for previews, zones, and WLED segment ranges.
 - Channel counts and color order can be applied to existing WLED output entries. The app does not configure GPIO pin assignments, LED type, power limits, Wi-Fi, or other hardware settings.
 - Basic nightly WLED timers and a scheduled look are written to WLED. Date-range calendar programs, AI generation, server-side sync, and custom Studio firmware features need backend services that are not included here.
 - Demo mode remains available and never sends commands to a physical controller.
