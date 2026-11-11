@@ -2,11 +2,11 @@
    Real-controller WLED requests pass through directly to the configured controller. */
 (function () {
   'use strict';
-  const D = window.DEMO_DATA, TL = window.TLFX, HOST = 'demo-roof', PREFS = window.TLSettings.read(), REAL = PREFS.mode === 'wled', LAYOUT = window.TLSettings.layout(), N = LAYOUT.runs.reduce((a, r) => a + r.leds, 0);
+  const D = window.DEMO_DATA, TL = window.TLFX, HOST = 'demo-roof', SERVER = window.TL_SERVER_STATE || null, PREFS = SERVER?.has_settings ? SERVER.settings : window.TLSettings.read(), REAL = PREFS.mode === 'wled', LAYOUT = window.TLSettings.layout(), N = LAYOUT.runs.reduce((a, r) => a + r.leds, 0);
   const KEY = 'tlstudio-demo-v1';
   const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } };
   const store = o => { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch { } };
-  const APPSTATE = Object.assign({}, D.app, load() || {});
+  const LEGACY = load(), APPSTATE = Object.assign({}, D.app, SERVER?.has_app ? (SERVER.app || {}) : (LEGACY || {}));
   const clone = o => JSON.parse(JSON.stringify(o));
 
   // ---------------- pretend controller ----------------
@@ -113,7 +113,16 @@
       return json({});
     }
     if (u.startsWith('/api/')) {
-      if (u === '/api/app') { if (m === 'POST') { const b = parsed(); Object.assign(APPSTATE, b); const keep = {}; for (const k in APPSTATE) keep[k] = APPSTATE[k]; store(keep); return json({ ok: true }); } return json(APPSTATE); }
+      if (u === '/api/app') {
+        if (SERVER) {
+          const response = await realFetch(url, opt);
+          if (m === 'POST' && response.ok) { Object.assign(APPSTATE, parsed()); SERVER.app = Object.assign({}, APPSTATE); SERVER.has_app = true; }
+          return response;
+        }
+        if (m === 'POST') { Object.assign(APPSTATE, parsed()); const keep = {}; for (const k in APPSTATE) keep[k] = APPSTATE[k]; store(keep); return json({ ok: true }); }
+        return json(APPSTATE);
+      }
+      if (u === '/api/settings') return realFetch(url, opt);
       if (u === '/api/wled/status') return json({ host: REAL ? (PREFS.outputs?.length ? PREFS.host : null) : HOST, mode: REAL ? 'wled' : 'demo' });
       if (u === '/api/fxinfo') return json(D.fxinfo);
       if (u === '/api/layout') return json(LAYOUT);
@@ -138,6 +147,7 @@
     return realFetch(url, opt);
   };
   window.__demoGet = url => url === '/api/layout' ? LAYOUT : url === '/api/app' ? APPSTATE : {};
+  if (SERVER && !SERVER.has_app && LEGACY) realFetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(LEGACY) }).then(r => { if (r.ok) { SERVER.app = LEGACY; SERVER.has_app = true; try { localStorage.removeItem(KEY); } catch { } } }).catch(() => { });
 
   // start the pretend roof on the look the app last pushed
   if (!REAL) { const lp = APPSTATE.lastPush; presets[3] = { on: true, bri: 180, seg: [Object.assign(segDefaults(0), { fx: 80, sx: 55, ix: 150, pal: 5, col: [[190, 10, 0], [255, 85, 0], [255, 185, 0]] })] }; apply(clone(presets[3]), true); st.ps = 3; }
