@@ -1113,7 +1113,7 @@
   }
 
   /* ======================= 🌙 schedule (controller timers do WHEN; the Studio server loads WHAT into preset 240) ======================= */
-  const HOME = { lat: 39.5, lon: -98.35 };         // generic sample location for demo sunset math
+  const LOCATION = window.TLSettings.read(), HOME = { lat: LOCATION.lat == null ? null : Number(LOCATION.lat), lon: LOCATION.lon == null ? null : Number(LOCATION.lon) };
   const PS_TONIGHT = 240, PS_NIGHT = 241, PS_OFF = 242, PS_MORNING = 243;
   APP.schedule = Object.assign({ onMode: 'sunset', onOffset: 0, onTime: '17:00', eveLook: 'current', nightOn: true, nightTime: '21:30', nightTimeWE: '21:30', nightMode: 'dim', nightLook: 'porch-glow-twinkle', nightBri: 10, nightFade: 5, offMode: 'sunrise', offTime: '01:00', programs: [] }, APP.schedule || {});
   const SC = APP.schedule; SC.programs = SC.programs || [];
@@ -1239,11 +1239,14 @@
     readSchedule();
     const btn = $('schSave'); btn.disabled = true; $('schStat').innerHTML = '<span class="aispin"></span>Writing to the controller…';
     try {
+      if (window.TL_REAL_WLED && SC.programs.some(p => p.on !== false)) throw new Error('Date-range calendar programs need a scheduler service and are not applied in direct WLED mode. Remove them, then save the nightly schedule.');
       await flushPalettes();   // custom palettes used by scheduled looks
       for (const id of new Set([SC.eveLook, ...SC.programs.map(p => p.look)].filter(plName))) { const pl = plById(id.slice(3)); if (pl) await writePlaylist(pl); }
       await fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) });
       const before = await wget('/json/state'), pause = ms => new Promise(r => setTimeout(r, ms));
-      await cfgPatch({ if: { ntp: { en: true, tz: 8, ln: HOME.lon, lt: HOME.lat } } });
+      const ntp = { en: true };
+      if (Number.isFinite(HOME.lat) && Number.isFinite(HOME.lon)) { ntp.ln = HOME.lon; ntp.lt = HOME.lat; }
+      await cfgPatch({ if: { ntp } });
       await wpost({ time: Math.floor(Date.now() / 1000) }); await pause(600);
       // bedtime + off are stored commands ("o": true); WLED runs each as it saves it, so we restore afterwards
       if (SC.nightOn) { await wpost(Object.assign(bedtimeBody(), { psave: PS_NIGHT, n: 'Schedule · Bedtime', o: true })); await pause(1000); }
@@ -1268,7 +1271,7 @@
       const seg = (before.seg || []).map(s => ({ id: s.id, start: s.start, stop: s.stop, fx: s.fx, sx: s.sx, ix: s.ix, c1: s.c1, c2: s.c2, c3: s.c3, o1: s.o1, o2: s.o2, o3: s.o3, pal: s.pal, col: s.col, grp: s.grp, spc: s.spc, of: s.of, on: s.on, bri: s.bri }));
       await wpost({ on: before.on, bri: before.bri, transition: 0, seg });
       // tonight's look → preset 240 (the server does this every day; force it now)
-      const ap = await fetch('/api/schedule/apply', { method: 'POST' }).then(r => r.json());
+      const ap = await fetch('/api/schedule/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: bodyOf(SC.eveLook) }) }).then(r => r.json());
       const c = await wget('/json/cfg'), n = (c.timers?.ins || []).filter(t => t.en && t.macro).length;
       $('schStat').innerHTML = '✓ Saved · ' + n + ' timers' + (ap.ok ? ' · tonight: ' + esc(ap.tonight || '') : ' · ⚠️ ' + esc(ap.error || ''));
       toast('Schedule saved to the controller 🌙'); openSchedule();
@@ -1689,6 +1692,11 @@
     try {
       for (const [k, p] of [['fxdata', '/json/fxdata'], ['effects', '/json/effects'], ['palettes', '/json/palettes'], ['info', '/json/info']]) WL[k] = await wget(p);
       WL.state = await wget('/json/state');
+      if (HOME.lat == null || HOME.lon == null) {
+        const cfg = await wget('/json/cfg').catch(() => null), ntp = cfg?.if?.ntp;
+        const lat = ntp?.lt == null ? NaN : Number(ntp.lt), lon = ntp?.ln == null ? NaN : Number(ntp.ln);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) { HOME.lat = lat; HOME.lon = lon; }
+      }
     } catch { toast('Can’t reach the controller right now', 'var(--warn)'); }
     if (!WL.fxdata.length) try { const fi = await fetch('/api/fxinfo').then(r => r.json()); WL.fxdata = []; (fi.effects || []).forEach(e => WL.fxdata[e.id] = e.meta); WL.effects = []; (fi.effects || []).forEach(e => WL.effects[e.id] = e.name); if (!WL.palettes.length) { WL.palettes = []; (fi.palettes || []).forEach(p => WL.palettes[p.id] = p.name); } renderGallery(true); if (state.edit) renderControls(); } catch { }
     connectWS(); onHouseChanged(); refreshScheduleBodies();
