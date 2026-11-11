@@ -238,11 +238,11 @@
     } finally { clearTimeout(timer); }
   });
   document.getElementById('applyWled').addEventListener('click', async () => {
-    let host, outputs, latitude, longitude;
+    let host, outputs, latitude, longitude, selectedChannels;
     try {
       const isDemo = mode.value === 'demo';
       host = isDemo ? '' : hostOf(addr.value); outputs = readRows();
-      const selectedChannels = Number(channelCount.value);
+      selectedChannels = Number(channelCount.value);
       if (![2, 4, 6].includes(selectedChannels)) throw new Error('Select a 2-, 4-, or 6-channel controller.');
       if (outputs.length > selectedChannels) throw new Error(`${outputs.length} configured outputs exceed the selected ${selectedChannels}-channel capacity. Remove unused rows or select a larger controller.`);
       latitude = lat.value.trim() === '' ? null : Number(lat.value); longitude = lon.value.trim() === '' ? null : Number(lon.value);
