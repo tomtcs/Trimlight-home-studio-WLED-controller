@@ -38,21 +38,42 @@
     return u.host;
   }
   function getLayout() {
-    const s = read();
-    if (s.mode !== 'wled' || !Array.isArray(s.outputs) || !s.outputs.length) return clone(window.DEMO_DATA.layout);
-    const outputs = s.outputs.slice(0, 6);
-    let start = 0;
-    const front = s.houseViews?.front || {};
-    return {
-      photo: front.photo || s.photo || 'demo-house.svg', photoSize: front.photoSize || s.photoSize || [2000, 1500], nextId: outputs.length + 1,
-      settings: { ledSpacing: 20, ledSize: 1.4 },
-      runs: outputs.map((o, i) => {
-        const leds = Math.max(1, Math.min(10000, Number(o.leds) || 1));
-        const row = { id: i + 1, name: o.name || DEFAULT_NAMES[i] || `Output ${i + 1}`, port: i + 1, points: Array.isArray(o.points) && o.points.length >= 2 ? clone(o.points) : clone(ROUTES[i]), leds, auto: false, reverse: !!o.reverse, start };
-        start += leds;
-        return row;
-      })
-    };
+    const s = read(), fallback = clone(window.DEMO_DATA.layout);
+    const sides = Array.isArray(s.houseSides) && s.houseSides.length ? s.houseSides : [{ id: 'front', label: 'Front' }, { id: 'right', label: 'Right side' }, { id: 'rear', label: 'Rear' }, { id: 'left', label: 'Left side' }, { id: 'shed', label: 'Shed' }];
+    const selectedSide = sides.find(x => x.id === s.previewSide) || sides.find(x => x.id === 'front') || sides[0];
+    const view = selectedSide ? s.houseViews?.[selectedSide.id] : null;
+    const photo = view?.photo || s.photo || fallback.photo;
+    const photoSize = view?.photoSize || s.photoSize || fallback.photoSize || [2000, 1500];
+    let runs = fallback.runs;
+    if (Array.isArray(s.outputs) && s.outputs.length) {
+      runs = s.outputs.slice(0, 6).map((o, i) => ({
+        id: i + 1, name: o.name || DEFAULT_NAMES[i] || `Output ${i + 1}`, port: i + 1,
+        points: Array.isArray(o.points) && o.points.length >= 2 ? clone(o.points) : clone(ROUTES[i] || ROUTES[ROUTES.length - 1]),
+        leds: Math.max(1, Math.min(10000, Number(o.leds) || 1)), auto: false, reverse: !!o.reverse
+      }));
+    }
+    const layout = { ...fallback, photo, photoSize, runs };
+    if (!Array.isArray(view?.lines) || !view.lines.length) return layout;
+    const routes = [];
+    for (const line of view.lines) {
+      const points = Array.isArray(line.points) ? line.points : [], wires = new Set(line.wireSegments || []);
+      let lit = [];
+      for (let i = 0; i < points.length - 1; i++) {
+        if (wires.has(i)) { if (lit.length > 1) routes.push({ name: line.name || selectedSide.label, points: lit }); lit = []; }
+        else { if (!lit.length) lit.push(points[i]); lit.push(points[i + 1]); }
+      }
+      if (lit.length > 1) routes.push({ name: line.name || selectedSide.label, points: lit });
+    }
+    if (!routes.length) return layout;
+    const total = runs.reduce((n, run) => n + run.leds, 0), visibleRoutes = routes.slice(0, total);
+    const lengths = visibleRoutes.map(route => route.points.slice(1).reduce((n, point, i) => n + Math.hypot(point[0] - route.points[i][0], point[1] - route.points[i][1]), 0));
+    const lengthTotal = lengths.reduce((a, b) => a + b, 0) || visibleRoutes.length;
+    let used = 0;
+    layout.mappedPaths = visibleRoutes.map((route, i) => {
+      const count = i === visibleRoutes.length - 1 ? total - used : Math.max(1, Math.floor(total * lengths[i] / lengthTotal)); used += count;
+      return { name: route.name, points: route.points.map(p => [p[0] / 100, p[1] / 100]), leds: count, reverse: false };
+    });
+    return layout;
   }
   async function saveSettings(patch) {
     const next = Object.assign(read(), patch || {});
@@ -236,6 +257,7 @@
         const next = { ...saved, mode: 'demo', host: '', channelCount: Number(channelCount.value), outputs, lat: null, lon: null };
         await saveSettings(next);
         setStatus(`Demo setup saved · ${outputs.length} output${outputs.length === 1 ? '' : 's'} configured within the ${next.channelCount}-channel capacity. House photos and traces are saved with this setup.`);
+        setTimeout(() => { history.replaceState(null, '', location.pathname + location.search); location.reload(); }, 500);
       } catch (e) { setStatus(`Could not save demo settings: ${e.message || e}`, true); }
       return;
     }
