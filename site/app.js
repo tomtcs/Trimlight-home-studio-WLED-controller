@@ -37,7 +37,8 @@
   const N = LEDS.length;
 
   /* ---------------- persistent app state (server: data/app.json) ---------------- */
-  const APP = Object.assign({ userLooks: [], edits: {}, cats: [], starred: {}, master: { speed: 100, bright: 100, spacing: 0, theme: '' }, perRow: 3, lastPush: null, history: [] }, getSync('/api/app'));
+  const APP = Object.assign({ userLooks: [], edits: {}, cats: [], starred: {}, roofSections: [], master: { speed: 100, bright: 100, spacing: 0, theme: '' }, perRow: 3, lastPush: null, history: [] }, getSync('/api/app'));
+  APP.roofSections = Array.isArray(APP.roofSections) ? APP.roofSections : [];
   let saveT = null; const pending = {};
   function save(keys) { keys.forEach(k => pending[k] = APP[k]); clearTimeout(saveT); saveT = setTimeout(() => { const b = Object.assign({}, pending); for (const k in pending) delete pending[k]; fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).catch(() => toast('Couldn’t save', 'var(--warn)')); }, 300); }
 
@@ -1307,23 +1308,29 @@
   const PORT_NAME = Object.fromEntries([...new Set(RUNS.map(r => r.port))].map(port => [port, 'Output ' + port]));
   const portRange = pt => { const rs = RUNS.filter(r => r.port === pt); return rs.length ? [rs[0].start, rs[rs.length - 1].stop] : null; };
   function nameFor(start, stop) {   // name a bulb range after the roof runs it covers
+    const saved = APP.roofSections.find(s => s.start === start && s.stop === stop);
+    if (saved) return saved.name;
     for (const pt in PORT_NAME) { const r = portRange(+pt); if (r && r[0] === start && r[1] === stop) return PORT_NAME[pt]; }
-    if (start === 0 && portRange(1) && stop === N && false) return 'Whole roof';
     const rs = RUNS.filter(r => r.start < stop && r.stop > start);
     if (rs.length > 2 && rs[0].start >= start && rs[rs.length - 1].stop <= stop) { const ports = [...new Set(rs.map(r => r.port))]; return ports.map(x => PORT_NAME[x] || 'Output ' + x).join(' + '); }
     if (rs.length && rs[0].start >= start && rs[rs.length - 1].stop <= stop) return rs.map(r => r.name.replace(/ · .*/, '')).join(' + ');
     return 'Bulbs ' + (start + 1) + '–' + stop;
   }
   function splitRanges(kind) {
-    if (kind === '7') return RUNS.map(r => [r.start, r.stop]);
-    const ports = []; RUNS.forEach(r => { const l = ports[ports.length - 1]; if (l && l.port === r.port) l.stop = r.stop; else ports.push({ port: r.port, start: r.start, stop: r.stop }); });
-    if (kind === '2') return [[ports[0].start, ports[0].stop], [ports[0].stop, N]];
-    return ports.map(x => [x.start, x.stop]);
+    if (kind === 'outputs') return RUNS.map(r => [r.start, r.stop, r.name]);
+    const raw = (APP.roofSections || []).filter(s => Number.isInteger(s.start) && Number.isInteger(s.stop) && s.start >= 0 && s.stop <= N && s.stop > s.start).slice().sort((a, b) => a.start - b.start);
+    const parts = []; let cursor = 0;
+    raw.forEach(s => { const start = Math.max(cursor, s.start); if (start > cursor) parts.push([cursor, start, 'Bulbs ' + (cursor + 1) + '–' + start]); if (s.stop > start) parts.push([start, s.stop, s.name]); cursor = Math.max(cursor, s.stop); });
+    if (cursor < N) parts.push([cursor, N, 'Bulbs ' + (cursor + 1) + '–' + N]);
+    return parts;
   }
-  const DEF_PART_LOOKS = ['autumn-twinkle', 'porch-glow', 'slow-maple-chase', 'harvest-candlelight', 'ember-drift', 'falling-leaves', 'cider-glow'];
   function resplit(kind) {
-    const old = SD.P.parts;
-    SD.P.parts = splitRanges(kind).map(([a, b], k) => Object.assign({ look: DEF_PART_LOOKS[k % DEF_PART_LOOKS.length], dir: 'n', speed: 1 }, old[k] ? { look: old[k].look, dir: old[k].dir, speed: old[k].speed } : {}, { start: a, stop: b, name: nameFor(a, b) }));
+    const old = SD.P.parts, ranges = splitRanges(kind), fallback = old[0]?.look || secLooks()[0]?.id || LOOKS[0]?.id;
+    if (!ranges.length) return toast('Add output channels or named roof sections first.', 'var(--warn)');
+    SD.P.parts = ranges.map(([a, b, label]) => {
+      const prior = old.filter(p => p.start < b && p.stop > a).sort((x, y) => (Math.min(b, y.stop) - Math.max(a, y.start)) - (Math.min(b, x.stop) - Math.max(a, x.start)))[0];
+      return { start: a, stop: b, name: label || nameFor(a, b), look: prior?.look || fallback, dir: prior?.dir || 'n', speed: prior?.speed || 1 };
+    });
     resetSecView(); renderSections();
   }
   function resetSecView() { if (vSec) vSec.parts = []; }
@@ -1332,7 +1339,7 @@
     if (!vSec) vSec = makeView($('secCv'), CROP_CARD, 1.4, 2);
     const l = id && BY_ID[id] && isSec(BY_ID[id].P) ? BY_ID[id] : null;
     if (l) SD = { id: l.id, name: l.name, P: clone(l.P) };
-    else if (!SD || SD.id) { SD = { id: null, name: 'My split look', P: { parts: [], bri: 180 } }; resplit('3'); }
+    else if (!SD || SD.id) { SD = { id: null, name: 'My split look', P: { parts: [], bri: 180 } }; resplit('outputs'); }
     resetSecView(); renderSections();
   }
   function renderSections() {
@@ -1486,11 +1493,21 @@
     try { CT = { cfg: await wget('/json/cfg'), info: await wget('/json/info'), st: await wget('/json/state') }; } catch { $('ctGrid').innerHTML = '<p class="sh">Can’t reach the controller right now.</p>'; return; }
     renderController(); clearInterval(ctPoll); ctPoll = setInterval(pollMic, 700);
   }
+  function renderRoofSectionManager() {
+    const sections = APP.roofSections || [];
+    return '<section class="schcard roof-manager"><h3>🏠 Named roof sections</h3><p class="sh">Define reusable bulb ranges on your mapped layout. These names appear as quick-pick zones in the Look Builder.</p>' +
+      (sections.length ? sections.map((s, i) => '<div class="roof-section-row" data-roof-row="' + i + '"><input type="text" data-roof-name value="' + esc(s.name) + '" maxlength="32" aria-label="Section name"><label>Bulbs <input type="number" data-roof-start min="1" max="' + N + '" value="' + (s.start + 1) + '"></label><span>to</span><label><input type="number" data-roof-stop min="1" max="' + N + '" value="' + s.stop + '" aria-label="Last bulb"></label><button type="button" class="x" data-roof-delete title="Delete section">×</button></div>').join('') : '<p class="sh">No named roof sections yet. Add ranges such as “Front gable” or “Garage eave.”</p>') +
+      '<button type="button" class="btn" id="roofSectionAdd">＋ Add bulb range</button></section>';
+  }
   function renderController() {
     const c = CT.cfg, ins = c.hw.led.ins || [], btn = (c.hw.btn?.ins || [])[0] || { macros: [0, 0, 0] }, ar = c.um?.AudioReactive || {}, nl = c.light?.nl || {};
     const sel = (id, v, opts) => '<select id="' + id + '">' + opts.map(([k, t]) => '<option value="' + k + '"' + (+k === +v ? ' selected' : '') + '>' + esc(t) + '</option>').join('') + '</select>';
     const ablOn = ins.some(b => b.maxpwr > 0 && b.ledma > 0);
     $('ctGrid').innerHTML =
+      '<section class="schcard"><h3>💡 WLED output channels</h3><p class="sh">LED counts, color order, home photo, and traced channel paths are configured together.</p>' +
+      ins.map((b, k) => '<div class="sl wide"><span>' + esc(PORT_NAME[k + 1] || 'Output ' + (k + 1)) + '</span><b>' + b.len + ' bulbs</b><span></span></div>').join('') +
+      '<button type="button" class="btn" id="ctOpenWledSetup">Configure output counts &amp; roof layout</button></section>' +
+      renderRoofSectionManager() +
       '<section class="schcard"><h3>⚡ Power limit</h3><p class="sh">Each output caps its current by dimming bright looks. The controller estimates <b>' + (CT.info.leds?.pwr ?? '?') + ' mA</b> right now.</p>' +
       '<label class="sw2"><input type="checkbox" id="ctAbl"' + (ablOn ? ' checked' : '') + '> Limit current per output</label>' +
       ins.map((b, k) => '<div class="sl wide"><span>' + esc(PORT_NAME[k + 1] || 'Output ' + (k + 1)) + ' <small>(' + b.len + ' bulbs)</small></span><input type="number" min="200" max="10000" step="50" data-abl="' + k + '" value="' + (b.maxpwr || 850) + '"><span>mA</span></div>').join('') +
@@ -1513,6 +1530,22 @@
       '<div class="sl"><span>Fade over</span>' + sel('ctNlDur', nl.dur ?? 60, [[15, '15 min'], [30, '30 min'], [60, '1 hour'], [120, '2 hours']]) + '<span></span></div>' +
       '<div class="sl"><span>End at</span>' + sel('ctNlEnd', (nl.tbri || 0) > 0 ? 1 : 0, [[0, 'Off'], [1, 'Bedtime brightness (' + SC.nightBri + '%)']]) + '<span></span></div>' +
       '<div class="sl"><span>Style</span>' + sel('ctNlMode', nl.mode ?? 1, [[1, 'Smooth fade'], [0, 'Wait, then switch'], [3, 'Sunrise (reverse)']]) + '<span></span></div></section>' + tlsCards();
+    $('ctOpenWledSetup').onclick = () => { location.hash = 'wiring'; };
+    $('roofSectionAdd').onclick = () => {
+      const occupied = new Set(APP.roofSections.flatMap(s => Array.from({ length: Math.min(N, s.stop) - Math.max(0, s.start) }, (_, i) => i + Math.max(0, s.start))));
+      let start = 0; while (start < N && occupied.has(start)) start++;
+      if (start >= N) start = 0;
+      APP.roofSections.push({ id: 'roof-' + Date.now().toString(36), name: 'New section', start, stop: Math.min(N, start + Math.max(1, Math.ceil(N / 4))) });
+      save(['roofSections']); window.TLBuilder?.refreshZones(); renderController();
+    };
+    $('ctGrid').querySelectorAll('[data-roof-delete]').forEach(b => b.onclick = () => {
+      APP.roofSections.splice(+b.closest('[data-roof-row]').dataset.roofRow, 1); save(['roofSections']); window.TLBuilder?.refreshZones(); renderController();
+    });
+    $('ctGrid').querySelectorAll('[data-roof-name],[data-roof-start],[data-roof-stop]').forEach(input => input.onchange = () => {
+      const row = input.closest('[data-roof-row]'), section = APP.roofSections[+row.dataset.roofRow], name = row.querySelector('[data-roof-name]').value.trim(), start = +row.querySelector('[data-roof-start]').value - 1, stop = +row.querySelector('[data-roof-stop]').value;
+      if (!name || !Number.isInteger(start) || !Number.isInteger(stop) || start < 0 || stop > N || stop <= start) { toast('Enter a section name and a valid inclusive bulb range between 1 and ' + N, 'var(--warn)'); renderController(); return; }
+      Object.assign(section, { name, start, stop }); APP.roofSections.sort((a, b) => a.start - b.start || a.stop - b.stop); save(['roofSections']); window.TLBuilder?.refreshZones(); renderController();
+    });
     renderMoments();
   }
   /* ---- optional Studio firmware extension cards ---- */
@@ -1632,6 +1665,7 @@
     btn.disabled = false;
   };
   $('ctWled').onclick = () => toast('In the real app this opens the controller’s own settings', 'var(--accent)');
+  $('ctWledSetup').onclick = () => { location.hash = 'wiring'; };
   document.querySelectorAll('[data-back]').forEach(b => b.onclick = () => goLibrary());
 
   /* ======================= one shared animation loop ======================= */
@@ -1662,7 +1696,8 @@
   const TLS = window.TLSimple;
   function openSimple(id) { if (!TLS) return toast('Builder didn’t load', 'var(--warn)'); showRoute('simple'); TLS.open(id); }
   const BHOST = {
-    FXL, N, runs: () => RUNS, leds: () => LEDS,
+    FXL, N, runs: () => RUNS, leds: () => LEDS, sections: () => APP.roofSections,
+    loadDraft: () => APP.builderDraft, saveDraft: draft => { APP.builderDraft = draft; save(['builderDraft']); },
     fxdata: fx => WL.fxdata[fx], fxName: fx => WL.effects[fx], isAudio: fx => fxMeta(fx).audio,
     palettes: () => (WL.palettes.length ? WL.palettes : (FXL ? FXL.palNames : [])).map((name, id) => ({ id, name })),
     themes: () => CAT.THEMES.flatMap(g => g[1]), cats: () => CAT.CATS.filter(c => !['house', 'all', 'mine'].includes(c[0])),
