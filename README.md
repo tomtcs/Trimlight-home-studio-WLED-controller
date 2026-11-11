@@ -18,4 +18,4 @@ Open <http://localhost:8080>.
 
 ## Review notes
 
-See [SECURITY_REVIEW.md](SECURITY_REVIEW.md) for the source review scope and limitations. No open-source license is included; repository visibility does not grant redistribution rights to contributed code or brand assets. Confirm the source and asset permissions with their owners before making this repository public or redistributing it.
+See [SECURITY_REVIEW.md](SECURITY_REVIEW.md) for the source review scope and limitations. No open-source license is included; repository visibility does not grant redistribution rights to contributed code or brand assets. Confirm the source and asset permissions with their owners before redistributing the source or brand assets.

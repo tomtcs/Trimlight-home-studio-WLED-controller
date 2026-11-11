@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 120" role="img" aria-labelledby="title desc">
+  <title id="title">Trimlight Home Studio</title>
+  <desc id="desc">Trimlight wordmark with a multicolor roofline above Home Studio.</desc>
+  <defs>
+    <linearGradient id="spectrum" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e45c54"/>
+      <stop offset=".2" stop-color="#f3a93a"/>
+      <stop offset=".4" stop-color="#e5d44c"/>
+      <stop offset=".6" stop-color="#54bd78"/>
+      <stop offset=".8" stop-color="#4a9fcb"/>
+      <stop offset="1" stop-color="#9a70c7"/>
+    </linearGradient>
+  </defs>
+  <path d="M24 35 80 9l55 26h36" fill="none" stroke="url(#spectrum)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="url(#spectrum)">
+    <circle cx="24" cy="35" r="4"/><circle cx="52" cy="22" r="4"/><circle cx="80" cy="9" r="4"/>
+    <circle cx="108" cy="22" r="4"/><circle cx="135" cy="35" r="4"/><circle cx="171" cy="35" r="4"/>
+  </g>
+  <text x="25" y="84" fill="#f4f7f5" font-family="Arial, Helvetica, sans-serif" font-size="55" font-weight="700" letter-spacing="-2">trimlight</text>
+  <text x="29" y="108" fill="#98a79d" font-family="Arial, Helvetica, sans-serif" font-size="13" font-weight="600" letter-spacing="5">HOME STUDIO</text>
+</svg>

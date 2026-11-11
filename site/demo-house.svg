@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2000 1500" role="img" aria-label="Illustration of a sample home used in demo previews">
+  <defs><linearGradient id="sky" x2="0" y2="1"><stop stop-color="#1b2820"/><stop offset="1" stop-color="#0b0e0d"/></linearGradient><linearGradient id="wall" x2="0" y2="1"><stop stop-color="#d6d8ce"/><stop offset="1" stop-color="#79877c"/></linearGradient></defs>
+  <rect width="2000" height="1500" fill="url(#sky)"/><circle cx="1550" cy="235" r="90" fill="#e8d8a6" opacity=".62"/>
+  <path d="M0 1020 Q310 960 650 1015 T1350 1000 T2000 1025 V1500 H0Z" fill="#16221a"/>
+  <path d="M110 770 500 450 870 770V1115H110Z" fill="url(#wall)"/><path d="M90 770 500 420 890 770H820L500 505 160 790Z" fill="#303b34"/>
+  <path d="M760 710 1190 370 1600 710V1120H760Z" fill="url(#wall)"/><path d="M730 720 1190 340 1630 720H1550L1190 445 805 760Z" fill="#303b34"/>
+  <path d="M315 1110V840H650V1110M1015 1120V805H1365V1120" fill="#344137"/><path d="M400 900h160v210H400zM1100 870h180v150h-180z" fill="#93a89a" opacity=".7"/>
+  <path d="M0 1120H2000" stroke="#89978a" stroke-opacity=".4" stroke-width="10"/>
+</svg>

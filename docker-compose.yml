@@ -1,0 +1,7 @@
+services:
+  trimlight-home-studio-wled:
+    build: .
+    container_name: trimlight-home-studio-wled
+    ports:
+      - "8080:80"
+    restart: unless-stopped

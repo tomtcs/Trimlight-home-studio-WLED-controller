@@ -1,0 +1,123 @@
+/* Trimlight Home Studio · WLED edition step-by-step look builder. */
+#simple{--bg:#0b0e0d;--panel:#141a17;--panel-2:#1b231e;--panel-3:#101612;--line:rgba(45,56,49,.35);--line-2:rgba(71,94,77,.4);--text:#f4f7f5;--muted:#98a79d;--dim:#6f8175;--accent:#62d682;--live:#89bd9b;--warn:#ec9c94;--grad:linear-gradient(135deg,#7ce59a,#35b354);color-scheme:dark}
+#simple *{box-sizing:border-box}
+#simple{background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,sans-serif;display:flex;flex-direction:column}
+#simple button{font:inherit;color:inherit;cursor:pointer}
+#simple .top{height:64px;flex:none;display:flex;align-items:center;gap:16px;padding:0 18px;border-bottom:1px solid var(--line);background:rgba(5,8,16,.96)}
+#simple .back{display:flex;align-items:center;gap:6px;border:1px solid var(--line-2);background:var(--panel-2);border-radius:10px;height:36px;padding:0 12px;color:var(--muted)}
+#simple .ttl b{display:block;font:600 18px "Space Grotesk",Inter,sans-serif}
+#simple .ttl small{color:var(--dim);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+#simple .steps{display:flex;gap:4px;margin:0 auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:4px}
+#simple .steps button{border:0;background:none;border-radius:10px;padding:7px 13px;color:var(--muted);display:flex;align-items:center;gap:8px;font-size:13px;white-space:nowrap}
+#simple .steps button i{font-style:normal;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line-2);font:600 11px Inter}
+#simple .steps button.done i{background:#1f3b2e;border-color:#2e8f63;color:#8affc8}
+#simple .steps button.on{background:var(--grad);color:#092211;font-weight:600}
+#simple .steps button.on i{border-color:#092211;color:#092211}
+#simple .adv{border:1px solid var(--line-2);background:none;border-radius:10px;height:36px;padding:0 12px;color:var(--muted);font-size:12.5px}
+#simple .adv:hover{color:var(--text)}
+#simple .wrap{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1.25fr) minmax(420px,1fr)}
+#simple .left{padding:16px;display:flex;flex-direction:column;gap:12px;min-height:0}
+#simple .stage{position:relative;flex:1;min-height:280px;border-radius:18px;overflow:hidden;border:1px solid var(--line);background:#101612}
+#simple .stage canvas{position:absolute;inset:0;width:100%;height:100%}
+#simple .stage .tag{position:absolute;left:14px;top:14px;background:rgba(8,12,22,.8);border:1px solid var(--line-2);border-radius:10px;padding:6px 11px;font-size:12px}
+#simple .stage .tag b{color:var(--accent)}
+#simple .strip{height:16px;border-radius:5px;overflow:hidden;flex:none}
+#simple .strip canvas{width:100%;height:100%;display:block}
+#simple .recipe{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:12.5px;color:var(--muted)}
+#simple .recipe span{background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:3px 9px}
+#simple .recipe span b{color:var(--text);font-weight:600}
+#simple .right{border-left:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+#simple .phead{padding:20px 22px 10px}
+#simple .phead small{color:var(--accent);font:600 11px Inter;letter-spacing:.1em;text-transform:uppercase}
+#simple .phead h2{margin:4px 0 2px;font:600 24px "Space Grotesk",Inter,sans-serif}
+#simple .phead p{margin:0;color:var(--muted)}
+#simple .pbody{flex:1;overflow-y:auto;padding:8px 22px 20px}
+#simple .pfoot{display:flex;gap:10px;align-items:center;padding:14px 22px;border-top:1px solid var(--line)}
+#simple .btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line-2);background:var(--panel-2);border-radius:12px;height:44px;padding:0 18px;font-size:14px}
+#simple .btn:hover{border-color:#6f86c4}
+#simple .btn.go{background:var(--grad);border:0;color:#092211;font-weight:600}
+#simple .btn.sm{height:32px;padding:0 12px;font-size:12.5px;border-radius:9px}
+#simple .sp{flex:1}
+#simple .lbl{font:600 11px Inter;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin:16px 0 8px;display:flex;justify-content:space-between}
+#simple .lbl:first-child{margin-top:4px}
+#simple .themes{display:grid;grid-template-columns:repeat(3,1fr);gap:7px}
+#simple .themes button{border:2px solid transparent;border-radius:11px;background:var(--panel-2);padding:0;overflow:hidden;text-align:left}
+#simple .themes button i{display:block;height:22px}
+#simple .themes button span{display:block;padding:4px 8px;font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#simple .themes button:hover,#simple .themes button.on{border-color:var(--accent)}
+#simple .themes button.on span{color:var(--text)}
+#simple .sws{display:flex;flex-wrap:wrap;gap:10px}
+#simple .sw{position:relative;width:64px;height:64px;border-radius:14px;border:2px solid rgba(255,255,255,.14);cursor:pointer}
+#simple .sw.sel{border-color:#fff;box-shadow:0 0 0 3px var(--accent)}
+#simple .sw input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+#simple .sw span{position:absolute;left:7px;bottom:4px;font:600 11px Inter;color:#fff;text-shadow:0 1px 3px #000;pointer-events:none}
+#simple .sw button{position:absolute;top:-8px;right:-8px;width:22px;height:22px;border-radius:50%;border:1px solid var(--line-2);background:#141a17;color:#fff;font-size:11px;display:none;padding:0;z-index:2}
+#simple .sw:hover button{display:block}
+#simple .swadd{width:64px;height:64px;border-radius:14px;border:1.5px dashed var(--line-2);background:none;color:var(--muted);font-size:24px}
+#simple .quickc{display:flex;flex-wrap:wrap;gap:7px}
+#simple .quickc button{width:30px;height:30px;border-radius:8px;border:1px solid rgba(255,255,255,.18);padding:0}
+#simple .quickc button:hover{transform:scale(1.12);border-color:#fff}
+#simple .pair{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#simple .opt{border:2px solid var(--line);border-radius:12px;background:var(--panel-2);padding:10px 12px;text-align:left}
+#simple .opt b{display:block;font-size:13.5px}
+#simple .opt small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+#simple .opt canvas{display:block;width:100%;height:14px;border-radius:4px;margin-top:8px}
+#simple .opt.on{border-color:var(--accent);background:#1d1a14}
+#simple .warn{margin-top:10px;padding:9px 12px;border-radius:10px;border:1px solid rgba(98,214,130,.45);color:#b9f4c9;font-size:12.5px}
+#simple .cats{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+#simple .cats button{border:1px solid var(--line);background:var(--panel-2);border-radius:999px;padding:5px 12px;font-size:12.5px;color:var(--muted)}
+#simple .cats button.on{background:var(--accent);border-color:var(--accent);color:#092211;font-weight:600}
+#simple .mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:8px}
+#simple .mcard{border:2px solid var(--line);border-radius:13px;background:var(--panel-2);padding:9px 10px 10px;text-align:left}
+#simple .mcard:hover{border-color:var(--line-2)}
+#simple .mcard.on{border-color:var(--accent);background:#1d1a14}
+#simple .mcard canvas{display:block;width:100%;height:16px;border-radius:5px;background:#101612;margin-bottom:8px}
+#simple .mcard b{font-size:13.5px;font-weight:600;display:block}
+#simple .mcard small{display:block;color:var(--muted);font-size:11.5px;line-height:1.35;margin-top:2px}
+#simple .mcard em{font-style:normal;font-size:10px;color:var(--dim);border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-top:6px;display:inline-block}
+#simple .big{margin:6px 0 22px}
+#simple .big .r{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px}
+#simple .big .r b{font-size:15px}
+#simple .big .r output{font:600 14px "Space Grotesk";color:var(--accent)}
+#simple .big input{width:100%;accent-color:#ff9a3d;height:28px}
+#simple .big .ends{display:flex;justify-content:space-between;color:var(--dim);font-size:12px;margin-top:-2px}
+#simple .dirs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+#simple .zone{display:grid;grid-template-columns:22px 1fr auto;gap:10px;align-items:center;border:2px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--panel-2);margin-bottom:7px;cursor:pointer}
+#simple .zone.on{border-color:var(--accent);background:#1d1a14}
+#simple .zone input{accent-color:#62d682;width:17px;height:17px}
+#simple .zone small{color:var(--dim)}
+#simple .extra{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;border:2px solid var(--line);border-radius:14px;padding:12px 14px;background:var(--panel-2);margin-bottom:9px;cursor:pointer}
+#simple .extra.on{border-color:var(--accent);background:#1d1a14}
+#simple .extra b{font-size:14.5px}
+#simple .extra small{display:block;color:var(--muted);font-size:12.5px;margin-top:2px}
+#simple .tog{width:44px;height:25px;border-radius:13px;background:#26342b;position:relative;border:1px solid var(--line-2)}
+#simple .tog::after{content:"";position:absolute;top:3px;left:3px;width:17px;height:17px;border-radius:50%;background:#fff;transition:.15s}
+#simple .extra.on .tog{background:#2e8f63}
+#simple .extra.on .tog::after{left:22px}
+#simple .sub2{margin:8px 0 0;display:none}
+#simple .extra.on .sub2{display:block}
+#simple .namein{width:100%;background:var(--bg);border:1px solid var(--line-2);border-radius:12px;color:var(--text);padding:12px 14px;font:600 18px "Space Grotesk",Inter,sans-serif}
+#simple .namein:focus{outline:none;border-color:var(--accent)}
+#simple .sum{border:1px solid var(--line);border-radius:12px;background:var(--panel-3);padding:4px 14px}
+#simple .sum div{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid rgba(45,56,49,.18);font-size:13.5px}
+#simple .sum div:last-child{border:0}
+#simple .sum span{color:var(--muted)}
+#simple .sum b{text-align:right;font-weight:600}
+#simple .sum a{color:var(--accent);cursor:pointer;font-size:12px;margin-left:8px}
+#simple .catpick{display:flex;flex-wrap:wrap;gap:6px}
+#simple .catpick button{border:1px solid var(--line);background:var(--panel-2);border-radius:999px;padding:5px 12px;font-size:12.5px;color:var(--muted)}
+#simple .catpick button.on{border-color:var(--accent);color:var(--text)}
+#simple .note{font-size:12.5px;color:var(--muted);background:var(--panel-3);border:1px solid var(--line);border-radius:10px;padding:9px 12px;margin-top:12px}
+#simple .note b{color:var(--text)}
+@media (max-width:1100px){#simple{background:var(--bg);color:var(--text);font:14px/1.45 Inter,system-ui,sans-serif;display:flex;flex-direction:column}
+#simple .wrap{grid-template-columns:1fr}
+#simple .stage{min-height:320px}
+#simple .steps button span{display:none}}
+/* undo app-wide rules that share these names */
+#simple aside{width:auto;height:auto;flex:initial;backdrop-filter:none}
+#simple .btn{height:44px;font-weight:500}#simple .btn.go{font-weight:600}#simple .btn.sm{height:32px}
+#simple .stage{width:auto;height:auto;box-shadow:none}
+#simple .back{font-weight:500}
+#simple .note{margin:12px 0 0}
+#simple [disabled]{opacity:.45;cursor:default}
+#simple .wrap{flex:1}

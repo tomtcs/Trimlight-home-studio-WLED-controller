@@ -1,0 +1,743 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#0b0e0d"><title>Trimlight Home Studio · WLED Edition</title><link rel="icon" href="trimlight-logo.svg" type="image/svg+xml"><style>:root{color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#0b0e0d;color:#f4f7f5}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0b0e0d; --panel:rgba(20,26,23,.92); --panel-solid:#141a17; --panel-2:#1b231e;
+  --line:rgba(45,56,49,.78); --line-2:rgba(98,214,130,.42);
+  --text:#f4f7f5; --muted:#98a79d; --dim:#6f8175;
+  --accent:#62d682; --live:#89bd9b; --warn:#ec9c94;
+  --grad:linear-gradient(135deg,#7ce59a,#35b354);
+  --ease:cubic-bezier(.2,.8,.2,1);
+  --side:244px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--text);font:13px/1.45 Inter,system-ui,sans-serif;overflow:hidden;-webkit-font-smoothing:antialiased;
+  background-image:radial-gradient(1100px 520px at 35% -12%,rgba(255,130,50,.07),transparent 60%),radial-gradient(900px 600px at 100% 110%,rgba(60,90,200,.08),transparent 60%)}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+input{font:inherit;color:inherit}
+.h{font-family:"Space Grotesk",Inter,sans-serif}
+svg{display:block}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--live);box-shadow:0 0 8px var(--live);flex:none;display:inline-block}
+
+/* ======================= ROUTES ======================= */
+.route{position:fixed;inset:0;transition:opacity .38s var(--ease),transform .42s var(--ease),visibility 0s linear 0s}
+.route.hidden{opacity:0;visibility:hidden;pointer-events:none;transition:opacity .3s var(--ease),transform .38s var(--ease),visibility 0s linear .38s}
+#gallery.hidden{transform:scale(.985) translateX(-18px)}
+#edit.hidden{transform:none}
+#edit.hidden .panel{transform:translateX(36px);opacity:0}
+#edit.hidden .foot{transform:translateY(24px);opacity:0}
+#edit.hidden .topbar{opacity:0}
+.noanim, .noanim *{transition:none!important}
+
+/* ======================= GALLERY ======================= */
+#gallery{display:flex}
+aside{width:var(--side);flex:none;height:100%;border-right:1px solid var(--line);background:rgba(5,8,16,.72);backdrop-filter:blur(14px);
+  display:flex;flex-direction:column;padding:18px 14px 14px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#2d3831 transparent}
+aside > *{flex-shrink:0}
+.brand{display:flex;flex-direction:column;align-items:flex-start;gap:5px;padding:2px 10px 18px}
+.brand-mark{width:30px;height:30px;border-radius:9px;background:var(--grad);display:grid;place-items:center;box-shadow:0 0 18px rgba(98,214,130,.24)}
+.brand-mark{display:none}
+.brand-logo{width:100%;max-width:178px;height:auto;display:block;filter:brightness(1.08)}
+.brand b{font-family:"Space Grotesk";font-size:16px;letter-spacing:.2px;display:block;line-height:1.1}
+.brand small{color:var(--dim);font-size:11px}
+.brand small{color:#dce7df;font-size:9px;font-weight:600;letter-spacing:3.5px;line-height:1.4;margin-left:2px}
+.navlbl{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);padding:10px 10px 6px;font-weight:600}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav button{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border-radius:10px;color:var(--muted);font-size:13px;text-align:left;
+  transition:background .18s,color .18s}
+.nav button:hover{background:rgba(17,26,46,.8);color:var(--text)}
+.nav button.on{background:linear-gradient(90deg,rgba(98,214,130,.14),rgba(53,179,84,.04));color:var(--text);box-shadow:inset 0 0 0 1px rgba(98,214,130,.22)}
+.nav button .ic{width:18px;display:grid;place-items:center;color:var(--dim);font-size:13px}
+.nav button.on .ic{color:var(--accent)}
+.nav button em{margin-left:auto;font-style:normal;font-size:11px;color:var(--dim);font-family:"Space Grotesk"}
+.nav button .sub{margin-left:auto;font-size:11px;color:var(--dim)}
+.nav button .sub.ok{color:var(--live)}
+.side-foot{margin-top:auto;border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(11,17,32,.6)}
+.side-foot .r{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px}
+.side-foot .r + .r{margin-top:6px}
+.side-foot b{color:var(--text);font-weight:600}
+
+.gmain{flex:1;min-width:0;display:flex;flex-direction:column;height:100%}
+.ghead{height:76px;flex:none;display:flex;align-items:center;gap:16px;padding:0 28px;border-bottom:1px solid var(--line);background:rgba(3,5,10,.55);backdrop-filter:blur(12px)}
+.ghead h1{font-family:"Space Grotesk";font-size:22px;font-weight:600;letter-spacing:-.2px;line-height:1.1}
+.ghead .sub{color:var(--dim);font-size:12px;margin-top:3px}
+.search{margin-left:12px;position:relative;width:280px}
+.search input{width:100%;height:40px;border-radius:12px;border:1px solid var(--line);background:rgba(17,26,46,.6);padding:0 14px 0 38px;outline:none;font-size:13px;transition:border-color .2s,background .2s}
+.search input::placeholder{color:var(--dim)}
+.search input:focus{border-color:rgba(98,214,130,.5);background:rgba(17,26,46,.9)}
+.search svg{position:absolute;left:13px;top:12px;color:var(--dim)}
+.search kbd{position:absolute;right:10px;top:10px;font:600 10px Inter;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
+.onhouse{display:flex;align-items:center;gap:10px;height:44px;padding:4px 14px 4px 4px;border-radius:14px;border:1px solid rgba(77,255,166,.28);background:rgba(77,255,166,.06);
+  transition:border-color .2s,background .2s}
+.onhouse:hover{border-color:rgba(77,255,166,.5);background:rgba(77,255,166,.1)}
+.onhouse canvas{width:58px;height:36px;border-radius:9px;display:block;background:#101612}
+.onhouse .t{display:flex;flex-direction:column;line-height:1.2;text-align:left}
+.onhouse .t small{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--live);font-weight:600;display:flex;align-items:center;gap:6px}
+.onhouse .t b{font-size:13px;font-weight:600}
+
+.scroller{flex:1;overflow-y:auto;padding:8px 28px 40px;scrollbar-width:thin;scrollbar-color:#2d3831 transparent}
+.group{padding-top:22px}
+.gh{display:flex;align-items:baseline;gap:10px;margin-bottom:14px}
+.gh h2{font-family:"Space Grotesk";font-size:16px;font-weight:600}
+.gh span{color:var(--dim);font-size:12px}
+.grid{display:grid;grid-template-columns:repeat(var(--cols,3),minmax(0,1fr));gap:var(--gap,18px)}
+.perrow{margin-left:auto;display:flex;align-items:center;gap:2px;background:var(--panel-2,#1b231e);border:1px solid rgba(71,94,77,.4);border-radius:12px;padding:3px}
+.perrow span{font-size:11.5px;color:#98a79d;padding:0 8px 0 6px;letter-spacing:.04em}
+.perrow button{width:30px;height:28px;border:0;border-radius:9px;background:transparent;color:#98a79d;font:600 13px/1 Inter,system-ui,sans-serif;cursor:pointer}
+.perrow button:hover{color:#f4f7f5;background:rgba(255,255,255,.05)}
+.perrow button.on{background:linear-gradient(180deg,#7ce59a,#35b354);color:#092211}
+.empty{color:var(--dim);padding:40px 0;font-size:14px}
+
+.card{position:relative;border-radius:16px;border:1px solid var(--line);background:linear-gradient(180deg,rgba(14,21,38,.92),rgba(8,12,22,.95));overflow:hidden;cursor:pointer;
+  transition:transform .25s var(--ease),border-color .25s,box-shadow .25s;outline:none}
+.card:hover,.card:focus-visible{transform:translateY(-3px);border-color:var(--line-2);box-shadow:0 22px 50px -24px rgba(0,0,0,.9),0 0 0 1px rgba(98,214,130,.08)}
+.card.live{border-color:rgba(77,255,166,.38)}
+.card.flash{box-shadow:0 0 0 2px rgba(98,214,130,.7)}
+.th{position:relative;aspect-ratio:4/3;background:#101612}
+.th canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.th::after{content:"";position:absolute;inset:auto 0 0 0;height:40%;background:linear-gradient(180deg,transparent,rgba(5,8,15,.55));pointer-events:none}
+.badge{position:absolute;left:10px;top:10px;z-index:2;display:none;align-items:center;gap:7px;height:24px;padding:0 10px;border-radius:999px;font-size:11px;font-weight:600;
+  background:rgba(4,20,12,.78);color:var(--live);border:1px solid rgba(77,255,166,.35);backdrop-filter:blur(8px)}
+.card.live .badge{display:inline-flex}
+.badge.mine{left:auto;right:48px;display:inline-flex;color:var(--accent);background:rgba(28,14,2,.72);border-color:rgba(98,214,130,.3)}
+.star{position:absolute;right:10px;top:10px;z-index:2;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font-size:15px;color:rgba(238,242,255,.65);
+  background:rgba(5,8,16,.55);border:1px solid rgba(255,255,255,.08);backdrop-filter:blur(8px);transition:color .15s,background .15s,transform .15s}
+.star:hover{color:var(--accent);transform:scale(1.06)}
+.star.on{color:var(--accent);border-color:rgba(98,214,130,.4)}
+.qpush{position:absolute;right:10px;bottom:10px;z-index:2;height:32px;padding:0 13px;border-radius:10px;font-weight:700;font-size:12px;color:#092211;background:var(--grad);
+  box-shadow:0 8px 22px -8px rgba(53,179,84,.8);opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s var(--ease);display:flex;align-items:center;gap:6px}
+.card:hover .qpush,.card:focus-within .qpush{opacity:1;transform:none}
+.card.live .qpush{display:none}
+.meta{padding:12px 14px 14px;display:flex;align-items:flex-start;gap:10px}
+.meta .nm{font-family:"Space Grotesk";font-size:15px;font-weight:600;line-height:1.2}
+.meta .mood{color:var(--muted);font-size:12px;margin-top:3px}
+.sw{margin-left:auto;display:flex;gap:4px;padding-top:4px}
+.sw i{width:10px;height:10px;border-radius:50%;display:block}
+.mic{display:inline-block;margin-left:6px;font-size:10px;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:0 5px;vertical-align:2px;font-family:Inter;font-weight:500}
+
+/* ======================= EDIT PAGE ======================= */
+#edit{display:grid;grid-template-rows:68px 1fr 84px;grid-template-columns:65% 35%}
+.topbar{grid-column:1/3;display:flex;align-items:center;gap:14px;padding:0 22px;border-bottom:1px solid var(--line);background:rgba(5,8,16,.72);backdrop-filter:blur(14px);transition:opacity .4s var(--ease)}
+.back{display:flex;align-items:center;gap:8px;height:38px;padding:0 14px 0 10px;border-radius:11px;border:1px solid var(--line);background:rgba(17,26,46,.6);color:var(--text);font-weight:600;font-size:13px;transition:background .2s,border-color .2s}
+.back:hover{background:rgba(17,26,46,1);border-color:var(--line-2)}
+.crumb{display:flex;flex-direction:column;line-height:1.15}
+.crumb small{color:var(--dim);font-size:11px}
+.crumb b{font-family:"Space Grotesk";font-size:19px;font-weight:600}
+.crumb b.ren{cursor:text;border-radius:6px;padding:0 4px;margin:0 -4px}
+.crumb b.ren:hover{background:rgba(255,255,255,.06)}
+.crumb b.ren:hover::after{content:" ✎";font-size:13px;color:#98a79d}
+.crumb input.rn{font:600 19px "Space Grotesk",Inter,sans-serif;color:#f4f7f5;background:#1b231e;border:1px solid #62d682;border-radius:8px;padding:2px 8px;width:300px;outline:none}
+.catchips{display:flex;gap:5px;align-items:center;flex-wrap:wrap}
+.catchips .cc{font-size:10.5px;font-weight:600;color:#98a79d;background:#1b231e;border:1px solid rgba(71,94,77,.35);border-radius:999px;padding:1px 8px}
+.catchips button{font:600 10.5px Inter,sans-serif;color:#62d682;background:none;border:1px dashed rgba(98,214,130,.45);border-radius:999px;padding:1px 8px;cursor:pointer}
+#catPop{position:fixed;z-index:210;width:260px;background:rgba(11,17,32,.97);backdrop-filter:blur(16px);border:1px solid rgba(71,94,77,.45);border-radius:14px;padding:10px;box-shadow:0 24px 60px rgba(0,0,0,.6);display:none}
+#catPop.on{display:block}
+#catPop b{display:block;font:600 14px "Space Grotesk",Inter,sans-serif;margin:2px 4px 8px}
+#catPop label{display:flex;align-items:center;gap:9px;padding:7px 6px;border-radius:9px;font-size:13px;cursor:pointer;color:#f4f7f5}
+#catPop label:hover{background:rgba(255,255,255,.04)}
+#catPop input[type=checkbox]{accent-color:#62d682;width:15px;height:15px}
+#catPop .newc{display:flex;gap:6px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(45,56,49,.28)}
+#catPop .newc input{flex:1;min-width:0;background:#1b231e;border:1px solid rgba(71,94,77,.4);border-radius:9px;color:#f4f7f5;font:13px Inter,sans-serif;padding:6px 8px}
+#catPop .newc button{border:0;border-radius:9px;background:linear-gradient(180deg,#7ce59a,#35b354);color:#092211;font:600 12px Inter,sans-serif;padding:0 10px;cursor:pointer}
+.card .rnb{margin-left:6px;border:0;background:none;color:#98a79d;font-size:12px;cursor:pointer;opacity:0;transition:opacity .15s;padding:0 2px}
+.card:hover .rnb{opacity:1}
+.card .rnb:hover{color:#62d682}
+.card input.rn{font-size:14px;width:100%}
+.navadd{display:flex;align-items:center;gap:8px;width:100%;margin-top:2px;padding:7px 12px;border:1px dashed rgba(71,94,77,.35);border-radius:10px;background:none;color:#98a79d;font:500 12.5px Inter,sans-serif;cursor:pointer}
+.navadd:hover{color:#62d682;border-color:rgba(98,214,130,.5)}
+
+.state{margin-left:auto;display:flex;align-items:center;gap:8px}
+.pill{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border-radius:999px;font-size:12px;border:1px solid var(--line);background:rgba(17,26,46,.55);color:var(--muted);white-space:nowrap}
+.pill b{color:var(--text);font-weight:600}
+.pill .k{font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700}
+.pill.pv{border-color:rgba(98,214,130,.4);background:rgba(98,214,130,.08)} .pill.pv .k{color:var(--accent)}
+.pill.hs .k{color:var(--live)}
+.pill.sync{border-color:rgba(77,255,166,.32);background:rgba(77,255,166,.07)}
+.arrow{color:var(--dim)}
+
+.stagewrap{position:relative;padding:18px 9px 18px 22px;min-height:0}
+.stage{position:relative;width:100%;height:100%;border-radius:18px;overflow:hidden;border:1px solid var(--line);background:#101612;box-shadow:0 30px 80px -30px rgba(0,0,0,.9)}
+.stage canvas.main{position:absolute;inset:0;width:100%;height:100%;display:block}
+.stage .tag{position:absolute;left:14px;top:14px;display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;border-radius:999px;background:rgba(5,8,16,.62);backdrop-filter:blur(10px);
+  border:1px solid rgba(98,214,130,.35);font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--accent)}
+.stage .tag.sync{border-color:rgba(77,255,166,.35);color:var(--live)}
+.stage .tag i{width:6px;height:6px;border-radius:50%;background:currentColor;box-shadow:0 0 8px currentColor}
+.fsbtn{position:absolute;right:14px;top:14px;height:34px;padding:0 12px;border-radius:10px;display:flex;align-items:center;gap:8px;background:rgba(5,8,16,.62);border:1px solid rgba(255,255,255,.1);
+  backdrop-filter:blur(10px);font-size:12px;font-weight:600;transition:background .2s}
+.fsbtn:hover{background:rgba(17,26,46,.9)}
+.fsbtn span{font-size:15px;line-height:1}
+.mini{position:absolute;right:14px;bottom:14px;width:236px;border-radius:13px;overflow:hidden;border:1px solid rgba(77,255,166,.35);background:#101612;
+  box-shadow:0 18px 40px -12px rgba(0,0,0,.9);transition:opacity .3s,transform .3s var(--ease)}
+.mini canvas{display:block;width:100%;height:136px}
+.mini .ml{position:absolute;left:0;right:0;bottom:0;padding:16px 10px 7px;background:linear-gradient(180deg,transparent,rgba(3,6,12,.85));font-size:11px;color:var(--muted);display:flex;align-items:center;gap:7px}
+.mini .ml b{color:var(--text);font-weight:600}
+.mini.gone{opacity:0;transform:translateY(8px);pointer-events:none}
+.fsbar{display:none}
+.stage.full{position:fixed;inset:0;z-index:50;border-radius:0;border:0}
+.stage.full .fsbar{display:flex;position:absolute;left:50%;bottom:22px;transform:translateX(-50%);align-items:center;gap:12px;padding:8px 8px 8px 16px;border-radius:16px;
+  background:rgba(5,8,16,.7);backdrop-filter:blur(14px);border:1px solid var(--line-2)}
+.stage.full .fsbar .n{font-family:"Space Grotesk";font-weight:600;font-size:14px}
+.stage.full .mini{bottom:90px}
+
+.panel{min-height:0;padding:18px 22px 18px 9px;transition:transform .45s var(--ease) .04s,opacity .4s var(--ease) .04s}
+.pin{height:100%;border-radius:18px;border:1px solid var(--line);background:var(--panel);backdrop-filter:blur(14px);display:flex;flex-direction:column;overflow:hidden}
+.phead{padding:18px 20px 14px;border-bottom:1px solid var(--line)}
+.phead .row{display:flex;align-items:center;gap:8px}
+.phead h3{font-family:"Space Grotesk";font-size:17px;font-weight:600}
+.made{margin-left:auto;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);border:1px solid rgba(98,214,130,.3);border-radius:999px;padding:3px 9px}
+.made.gen{color:var(--muted);border-color:var(--line)}
+.phead p{color:var(--muted);font-size:12.5px;margin-top:5px}
+.ctrls{flex:1;overflow-y:auto;padding:6px 20px 14px;scrollbar-width:thin;scrollbar-color:#2d3831 transparent}
+.spdrow{display:flex;align-items:center;gap:8px}.spdrow input{flex:1;min-width:0}
+.nudge{width:30px;height:30px;flex:none;border-radius:9px;border:1px solid var(--line-2);background:var(--panel-2);color:var(--text);font:600 16px/1 Inter,sans-serif;cursor:pointer}.nudge:hover{border-color:var(--accent);color:var(--accent)}
+.ctl{padding:14px 0;border-bottom:1px solid rgba(45,56,49,.16)}
+.ctl:last-child{border-bottom:0}
+.cl{display:flex;align-items:baseline;gap:8px;margin-bottom:9px}
+.cl label{font-weight:600;font-size:13px}
+.cl .val{margin-left:auto;font-family:"Space Grotesk";font-size:13px;color:var(--accent);font-weight:600}
+.hint{color:var(--dim);font-size:11.5px;margin-top:7px}
+.ends{display:flex;justify-content:space-between;color:var(--dim);font-size:11px;margin-top:6px}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:6px;border-radius:6px;outline:none;cursor:pointer;
+  background:var(--track,linear-gradient(90deg,#62d682 0,#35b354 var(--v,50%),#26342b var(--v,50%)))}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#e8ffed;border:3px solid #62d682;box-shadow:0 0 0 4px rgba(98,214,130,.15),0 2px 8px rgba(0,0,0,.6);transition:transform .15s}
+input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.1)}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:#e8ffed;border:3px solid #62d682}
+.seg{display:flex;gap:6px;background:rgba(5,8,16,.5);padding:4px;border-radius:12px;border:1px solid var(--line)}
+.seg button{flex:1;height:34px;border-radius:9px;color:var(--muted);font-size:12.5px;font-weight:500;display:flex;align-items:center;justify-content:center;gap:7px;transition:background .18s,color .18s}
+.seg button:hover{color:var(--text)}
+.seg button.on{background:rgba(98,214,130,.14);color:var(--text);box-shadow:inset 0 0 0 1px rgba(98,214,130,.35)}
+.segrow{display:flex;gap:8px;align-items:stretch}.segrow .seg{flex:1}
+.segrow .seg button{white-space:nowrap;font-size:12px;gap:5px;padding:0 4px}.segrow .dots i:nth-child(n+5){display:none}
+.gapbox{display:flex;align-items:center;gap:7px;padding:0 10px;border-radius:12px;border:1px solid var(--line);background:rgba(5,8,16,.5);color:var(--muted);font-size:12.5px}
+.gapbox input{width:42px;height:30px;border-radius:8px;border:1px solid #2a3654;background:#141a17;color:var(--text);font:600 13px Inter,sans-serif;text-align:center}
+.gapbox input:focus{outline:none;border-color:rgba(98,214,130,.6)}
+.seg .dots{display:flex;gap:3px}.seg .dots i{width:5px;height:5px;border-radius:50%;background:#35b354}.seg .dots i.off{background:#344137}
+.pairs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.pairs button{border-radius:12px;border:1px solid var(--line);background:rgba(5,8,16,.5);padding:10px 8px 9px;display:flex;flex-direction:column;align-items:center;gap:7px;font-size:11.5px;color:var(--muted);transition:border-color .18s,color .18s,background .18s}
+.pairs button:hover{border-color:var(--line-2);color:var(--text)}
+.pairs button.on{border-color:rgba(98,214,130,.55);color:var(--text);background:rgba(98,214,130,.07)}
+.pairs .chipc{width:100%;height:22px;border-radius:7px}
+.colors{display:flex;gap:10px}
+.colors label{flex:1;position:relative;height:44px;border-radius:12px;border:1px solid var(--line);cursor:pointer;overflow:hidden;display:block}
+.colors label span{position:absolute;inset:0}
+.colors label em{position:absolute;left:8px;bottom:5px;font-style:normal;font-size:10px;color:rgba(0,0,0,.7);font-weight:700}
+.colors input{position:absolute;opacity:0;inset:0;width:100%;height:100%;cursor:pointer}
+.colors .lk{position:absolute;right:5px;top:5px;z-index:2;width:22px;height:22px;border-radius:7px;border:0;background:rgba(0,0,0,.35);color:#fff;font-size:11px;cursor:pointer;display:grid;place-items:center;padding:0}
+.colors .lk.on{background:rgba(0,0,0,.7);box-shadow:0 0 0 1px rgba(255,255,255,.5)}
+.ctools{display:flex;gap:8px;margin-top:10px}
+.ctools button{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;height:36px;border-radius:11px;border:1px solid rgba(71,94,77,.4);background:#1b231e;color:#f4f7f5;font:600 13px/1 Inter,system-ui,sans-serif;cursor:pointer}
+.ctools button:hover{border-color:#5070b8}
+.ctools button.open{border-color:#62d682;color:#62d682}
+.master{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin:0 28px 4px;padding:10px 14px;border:1px solid rgba(45,56,49,.28);border-radius:14px;background:rgba(11,17,32,.6)}
+.master .mt{font:600 10.5px/1 Inter,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#62d682;display:flex;align-items:center;gap:6px}
+.master .mc{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#98a79d}
+.master input[type=range]{width:110px;accent-color:#62d682}
+.master output{min-width:38px;color:#f4f7f5;font:600 12px/1 "Space Grotesk",Inter,sans-serif;font-variant-numeric:tabular-nums}
+.master .sg{display:flex;gap:2px;background:#1b231e;border:1px solid rgba(71,94,77,.4);border-radius:10px;padding:2px}
+.master .sg button{border:0;background:none;color:#98a79d;font:600 12px/1 Inter,sans-serif;padding:6px 9px;border-radius:8px;cursor:pointer}
+.master .sg button.on{background:linear-gradient(180deg,#7ce59a,#35b354);color:#092211}
+.master select{background:#1b231e;border:1px solid rgba(71,94,77,.4);border-radius:10px;color:#f4f7f5;font:500 12.5px Inter,sans-serif;padding:6px 8px;max-width:190px}
+.master .mreset{margin-left:auto;border:1px solid rgba(71,94,77,.4);background:none;color:#98a79d;border-radius:10px;padding:6px 10px;font:600 12px Inter,sans-serif;cursor:pointer}
+.master .mreset:hover{color:#f4f7f5}
+.master.active{border-color:rgba(98,214,130,.45)}
+#themePop{position:fixed;z-index:200;width:380px;max-height:470px;overflow-y:auto;background:rgba(11,17,32,.97);backdrop-filter:blur(16px);border:1px solid rgba(71,94,77,.45);border-radius:16px;padding:12px;box-shadow:0 24px 60px rgba(0,0,0,.6);display:none}
+#themePop.on{display:block}
+#themePop .thm-h{display:flex;justify-content:space-between;align-items:center;margin:2px 4px 8px}
+#themePop .thm-h b{font:600 15px/1 "Space Grotesk",Inter,sans-serif}
+#themePop .thm-h span{font-size:11.5px;color:#6f8175}
+#themePop h4{font:600 10.5px/1 Inter,sans-serif;letter-spacing:.14em;text-transform:uppercase;color:#98a79d;margin:12px 4px 6px}
+#themePop .thm{display:grid;grid-template-columns:96px 1fr;gap:10px;align-items:center;width:100%;padding:6px;border-radius:10px;border:1px solid transparent;background:none;color:#f4f7f5;text-align:left;cursor:pointer;font:500 13px/1.2 Inter,sans-serif}
+#themePop .thm:hover{background:rgba(255,255,255,.04)}
+#themePop .thm.on{border-color:#62d682;background:rgba(98,214,130,.08)}
+#themePop .thm i{display:flex;height:22px;border-radius:7px;overflow:hidden}
+#themePop .thm i u{flex:1}
+.reset{margin-top:6px;color:var(--dim);font-size:12px;text-decoration:underline;text-underline-offset:3px}
+.reset:hover{color:var(--text)}
+.note{margin:10px 0 2px;padding:10px 12px;border-radius:12px;background:rgba(98,214,130,.06);border:1px solid rgba(98,214,130,.18);color:var(--muted);font-size:12px}
+.note b{color:var(--text)}
+
+.foot{grid-column:1/3;display:flex;align-items:center;gap:12px;padding:0 22px;border-top:1px solid var(--line);background:rgba(5,8,16,.86);backdrop-filter:blur(16px);
+  transition:transform .45s var(--ease) .06s,opacity .4s var(--ease) .06s}
+.btn{height:46px;padding:0 18px;border-radius:13px;display:inline-flex;align-items:center;gap:9px;font-weight:600;font-size:13.5px;border:1px solid var(--line);background:rgba(17,26,46,.6);transition:background .2s,border-color .2s,opacity .2s,color .2s}
+.btn:hover:not(:disabled){background:rgba(17,26,46,1);border-color:var(--line-2)}
+.btn:disabled{opacity:.4;cursor:default}
+.fmsg{flex:1;color:var(--muted);font-size:12.5px;padding:0 8px;min-width:0}
+.fmsg b{color:var(--text);font-weight:600}
+.push{position:relative;overflow:hidden;height:56px;min-width:260px;justify-content:center;padding:0 28px;border-radius:15px;border:0;background:var(--grad);color:#092211;font-family:"Space Grotesk";font-size:17px;font-weight:700;
+  box-shadow:0 14px 34px -12px rgba(53,179,84,.85),inset 0 1px 0 rgba(255,255,255,.35);transition:transform .15s,box-shadow .2s,filter .2s}
+.btn.push:hover:not(:disabled){background:var(--grad);border-color:transparent;transform:translateY(-1px);filter:brightness(1.05);box-shadow:0 18px 40px -12px rgba(53,179,84,.95),inset 0 1px 0 rgba(255,255,255,.35)}
+.push .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(255,255,255,.28)}
+.push span{position:relative}
+.push.synced{background:rgba(77,255,166,.08);color:var(--live);box-shadow:inset 0 0 0 1px rgba(77,255,166,.35);cursor:default;font-size:15px}
+.push.synced:hover{transform:none;filter:none}
+.push.synced:disabled{opacity:1}
+
+/* toast */
+.toast{position:fixed;left:50%;top:18px;transform:translate(-50%,-14px);opacity:0;z-index:90;display:flex;align-items:center;gap:10px;padding:10px 16px;border-radius:12px;
+  background:rgba(11,17,32,.95);border:1px solid var(--line-2);box-shadow:0 18px 40px -10px rgba(0,0,0,.8);font-size:13px;transition:opacity .25s,transform .3s var(--ease);pointer-events:none}
+.toast.on{opacity:1;transform:translate(-50%,0)}
+
+.ghost{position:fixed;z-index:80;pointer-events:none;border-radius:16px;transform-origin:0 0;box-shadow:0 30px 80px -20px rgba(0,0,0,.9)}
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{transition-duration:.01ms!important;animation-duration:.01ms!important}
+  .card:hover{transform:none}
+}
+</style>
+<link rel="stylesheet" href="builder.css">
+<link rel="stylesheet" href="simple.css">
+<link rel="preload" href="trimlight-logo.svg" as="image" type="image/svg+xml">
+
+ </head><body>
+
+
+<!-- =========================== GALLERY =========================== -->
+<section id="gallery" class="route">
+  <aside>
+    <div class="brand">
+      <div><img class="brand-logo" src="trimlight-logo.svg" alt="Trimlight"><small id="brandSub">HOME STUDIO · WLED</small></div>
+    </div>
+    <div class="navlbl">Looks</div>
+    <nav class="nav" id="nav"></nav>
+    <div class="navlbl" style="margin-top:14px">House</div>
+    <nav class="nav" id="nav2">
+      <button data-sec="schedule"><span class="ic">◷</span>Schedule<span class="sub" id="schedSub">soon</span></button>
+      <button data-sec="make"><span class="ic">✚</span>Make a look<span class="sub">step by step</span></button>
+      <button data-sec="builder"><span class="ic">✦</span>Look Builder<span class="sub">advanced</span></button>
+      <button data-sec="sections"><span class="ic">▤</span>Sections<span class="sub">split roof</span></button>
+      <button data-sec="playlists"><span class="ic">▶</span>Playlists<span class="sub" id="plSub"></span></button>
+      <button data-sec="dimnow" id="dimNowBtn"><span class="ic">🌙</span>Bedtime dim now<span class="sub" id="dimSub">10%</span></button>
+      <button data-sec="sleep"><span class="ic">☾</span>Fade to sleep<span class="sub" id="sleepSub">off</span></button>
+      <button data-sec="setup"><span class="ic">⌗</span>Wiring &amp; setup</button>
+      <button data-sec="ctrl"><span class="ic">◉</span>Controller<span class="sub ok" id="ctrlSub">…</span></button>
+    </nav>
+    <div class="side-foot" id="sideFoot">
+      <div class="r"><span class="dot" id="footDot"></span><span id="footName">Connecting…</span></div>
+      <div class="r" style="color:var(--dim);display:block" id="footSub"></div>
+      <label class="r" style="display:flex;gap:8px;align-items:center;margin-top:8px;cursor:pointer"><input type="checkbox" id="powerTgl" style="accent-color:#62d682"> House lights on</label>
+    </div>
+  </aside>
+  <div class="gmain">
+    <div class="ghead">
+      <div>
+        <h1 id="secTitle">All looks</h1>
+        <div class="sub" id="secSub">Every look, on your house. Click one to edit it.</div>
+      </div>
+      <button class="aibtn" id="aiBtn" title="Describe a look and The AI service designs it">✨ Create with AI</button>
+      <div class="perrow" id="perrow" title="Looks per row (keys: - and +)"><span>PER ROW</span><button data-c="2">2</button><button data-c="3">3</button><button data-c="4">4</button><button data-c="5">5</button><button data-c="6">6</button></div>
+      <div class="search">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="q" placeholder="Search looks…" autocomplete="off"><kbd>/</kbd>
+      </div>
+      <button class="onhouse" id="onhouse" title="Open the current WLED output">
+        <canvas id="pillCv"></canvas>
+        <span class="t"><small><span class="dot"></span>Active on WLED</small><b id="pillName">Autumn Twinkle</b></span>
+      </button>
+    </div>
+    <div class="master" id="master">
+      <span class="mt">⚙ Master <small style="letter-spacing:0;text-transform:none;color:#6f8175;font-weight:500">changes every look</small></span>
+      <label class="mc">Speed <input type="range" id="mSpeed" min="5" max="200" step="1"><output id="mSpeedO"></output></label>
+      <label class="mc">Brightness <input type="range" id="mBright" min="20" max="150" step="5"><output id="mBrightO"></output></label>
+      <span class="mc">Bulbs <span class="sg" id="mSpacing"><button data-s="0">Own</button><button data-s="1">All</button><button data-s="2">2nd</button><button data-s="3">3rd</button></span></span>
+      <label class="mc">Colors <select id="mTheme"></select></label>
+      <button class="mreset" id="mReset">Reset</button>
+    </div>
+    <div class="scroller" id="scroller"><div id="groups"></div></div>
+  </div>
+</section>
+
+<!-- =========================== EDIT PAGE =========================== -->
+<section id="edit" class="route hidden">
+  <div class="topbar">
+    <button class="back" id="backBtn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Library</button>
+    <div class="crumb"><small id="eCat" class="catchips">Fall</small><b id="eName" class="ren" title="Click to rename">Autumn Twinkle</b></div>
+    <div class="state" id="eState"></div>
+  </div>
+  <div class="stagewrap">
+    <div class="stage" id="stage">
+      <canvas class="main" id="stageCv"></canvas>
+      <div class="tag" id="stageTag"><i></i><span>Preview</span></div>
+      <button class="fsbtn" id="fsBtn"><span>⛶</span><em style="font-style:normal" id="fsTxt">Full screen</em></button>
+      <div class="mini" id="mini"><canvas id="miniCv"></canvas><div class="ml"><span class="dot"></span>Current WLED output · <b id="miniName">Autumn Twinkle</b></div></div>
+      <div class="fsbar"><span class="n" id="fsName">Autumn Twinkle</span><button class="btn push" id="fsPush" style="height:44px;min-width:0;font-size:14px"><span>Push to house</span></button><button class="btn" id="fsExit">Exit full screen <span style="color:var(--dim)">Esc</span></button></div>
+    </div>
+  </div>
+  <div class="panel">
+    <div class="pin">
+      <div class="phead">
+        <div class="row"><h3 id="pTitle">Tune Autumn Twinkle</h3><span class="made" id="pMade">Made for this look</span></div>
+        <p id="pDesc">Slow twinkle and fade across every bulb, in deep reds and amber.</p>
+      </div>
+      <div class="ctrls" id="ctrls"></div>
+    </div>
+  </div>
+  <div class="foot">
+    <button class="btn" id="revertBtn"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>Back to the current WLED output</button>
+    <div class="fmsg" id="fmsg"></div>
+    <button class="btn" id="toBuilderBtn" title="Open this look in the Look Builder to add layers">✦ Add layers</button>
+    <button class="btn" id="saveBtn"><span style="color:var(--accent)">☆</span>Save as my look</button>
+    <button class="btn push" id="pushBtn"><i class="fill" id="pushFill"></i><span id="pushTxt">Push to house</span></button>
+  </div>
+</section>
+
+<div class="toast" id="toast"><span class="dot" id="toastDot"></span><span id="toastText"></span></div>
+
+<div id="sleepPop" class="pop" hidden><b>Fade to sleep</b><p>Slowly dims the roof to off.</p><div class="row"><button data-nl="15">15 min</button><button data-nl="30">30 min</button><button data-nl="60">1 hr</button><button data-nl="120">2 hr</button></div><button class="cancel" data-nl="0">Cancel fade</button></div>
+<style>
+.pop{position:fixed;z-index:220;width:250px;background:rgba(11,17,32,.97);backdrop-filter:blur(16px);border:1px solid rgba(71,94,77,.45);border-radius:14px;padding:12px;box-shadow:0 24px 60px rgba(0,0,0,.6)}
+.pop b{font:600 15px "Space Grotesk",Inter,sans-serif}.pop p{margin:4px 0 10px;color:#98a79d;font-size:12.5px}
+.pop .row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.pop button{border:1px solid rgba(71,94,77,.4);background:#1b231e;color:#f4f7f5;border-radius:10px;padding:8px;font:600 13px Inter,sans-serif;cursor:pointer}
+.pop button:hover{border-color:#62d682}.pop .cancel{width:100%;margin-top:6px;background:none;color:#98a79d}
+.palsel{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;max-height:220px;overflow-y:auto;padding-right:4px}
+.palsel button{border:2px solid transparent;border-radius:9px;padding:0;background:#1b231e;color:#98a79d;text-align:left;cursor:pointer;overflow:hidden;font:500 11.5px Inter,sans-serif}
+.palsel button i{display:block;height:16px}.palsel button span{display:block;padding:3px 7px}
+.palsel button.on{border-color:#62d682;color:#f4f7f5}
+.chk{display:flex;align-items:center;gap:8px;font-size:13px;color:#c3cbe0;cursor:pointer;margin-top:4px}
+.chk input{accent-color:#62d682}
+.ext{font-size:11px;color:#6f8175;margin-left:6px}
+</style>
+<div id="aiModal" class="aimodal" hidden>
+  <div class="aibox">
+    <div class="aihead"><div><h2>✨ Create a look with AI</h2><p>Describe it in your own words. The AI service designs 4 options using your controller’s real effects, so the preview is what the roof will do.</p></div><button class="aix" id="aiClose" title="Close">×</button></div>
+    <textarea id="aiPrompt" rows="3" placeholder="e.g. Thanksgiving dinner: slow candlelight in cranberry and amber, like a long table of candles"></textarea>
+    <div class="aichips" id="aiChips"></div>
+    <div class="airow"><span class="aistat" id="aiStat"></span><button class="btn push aigo" id="aiGo"><span>✨ Design 4 looks</span></button></div>
+    <div class="aires" id="aiRes"></div>
+  </div>
+</div>
+<style>
+.aibtn{border:1px solid rgba(98,214,130,.55);background:linear-gradient(180deg,rgba(98,214,130,.16),rgba(53,179,84,.08));color:#b9f4c9;border-radius:12px;padding:0 14px;height:36px;font:600 13px Inter,sans-serif;cursor:pointer;white-space:nowrap}
+.aibtn:hover{border-color:#62d682;color:#fff}
+.aimodal{position:fixed;inset:0;z-index:300;background:rgba(2,3,8,.72);backdrop-filter:blur(8px);display:flex;align-items:flex-start;justify-content:center;padding:48px 20px;overflow-y:auto}
+.aimodal[hidden]{display:none}
+.aibox{width:min(1080px,100%);background:#141a17;border:1px solid rgba(71,94,77,.45);border-radius:20px;padding:22px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.aihead{display:flex;justify-content:space-between;gap:16px;margin-bottom:12px}.aihead h2{font:600 22px "Space Grotesk",Inter,sans-serif;margin:0}.aihead p{margin:4px 0 0;color:#98a79d;font-size:13.5px;max-width:720px}
+.aix{border:0;background:none;color:#98a79d;font-size:26px;cursor:pointer;line-height:1}
+#aiPrompt{width:100%;background:#1b231e;border:1px solid rgba(71,94,77,.45);border-radius:14px;color:#f4f7f5;font:15px/1.45 Inter,sans-serif;padding:12px 14px;resize:vertical;outline:none}
+#aiPrompt:focus{border-color:#62d682}
+.aichips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.aichips button{border:1px solid rgba(71,94,77,.35);background:#1b231e;color:#c3cbe0;border-radius:999px;padding:5px 11px;font:500 12.5px Inter,sans-serif;cursor:pointer}.aichips button:hover{border-color:#62d682;color:#fff}
+.airow{display:flex;align-items:center;gap:12px;justify-content:flex-end}.aistat{flex:1;color:#98a79d;font-size:13px}.aigo{min-width:200px;height:44px}
+.aires{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:16px}
+.aicard{background:#1b231e;border:1px solid rgba(45,56,49,.35);border-radius:16px;overflow:hidden;display:flex;flex-direction:column}
+.aicard canvas{width:100%;aspect-ratio:16/10;display:block;background:#101612}
+.aicard .m{padding:12px 14px;display:flex;flex-direction:column;gap:4px;flex:1}
+.aicard b{font:600 16px "Space Grotesk",Inter,sans-serif}.aicard p{margin:0;color:#c3cbe0;font-size:13px}.aicard small{color:#6f8175;font-size:12px}
+.aicard .use{margin-top:8px;align-self:flex-start;border:0;border-radius:10px;padding:8px 14px;background:linear-gradient(180deg,#7ce59a,#35b354);color:#092211;font:600 13px Inter,sans-serif;cursor:pointer}
+.aispin{display:inline-block;width:14px;height:14px;border:2px solid rgba(98,214,130,.3);border-top-color:#62d682;border-radius:50%;animation:aisp .8s linear infinite;vertical-align:-2px;margin-right:6px}@keyframes aisp{to{transform:rotate(360deg)}}
+.aitweak{margin-top:16px;padding-top:14px;border-top:1px solid rgba(45,56,49,.28)}
+.aitweak label{display:block;font-size:12.5px;color:#b9f4c9;font-weight:600;margin-bottom:6px}
+.aitweak .r{display:flex;gap:6px}.aitweak input{flex:1;min-width:0;background:#1b231e;border:1px solid rgba(71,94,77,.4);border-radius:10px;color:#f4f7f5;font:13px Inter,sans-serif;padding:8px 10px;outline:none}
+.aitweak input:focus{border-color:#62d682}.aitweak button{border:0;border-radius:10px;padding:0 12px;background:linear-gradient(180deg,#7ce59a,#35b354);color:#092211;font:600 13px Inter,sans-serif;cursor:pointer}
+.aitweak .s{font-size:12px;color:#98a79d;margin-top:6px;min-height:16px}
+@media (max-width:900px){.aires{grid-template-columns:1fr}}
+</style>
+
+<!-- =========================== SECTIONS =========================== -->
+<section id="sections" class="route hidden">
+  <div class="topbar">
+    <button class="back" data-back><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Library</button>
+    <div class="crumb"><small>A different look on each part of the roof</small><b>▤ Sections</b></div>
+    <div class="state"><span class="aistat" id="secStat"></span><button class="btn" id="secSave">Save as my look</button><button class="btn push" id="secPush" style="min-width:170px"><span>Push to house</span></button></div>
+  </div>
+  <div class="schpage secpage">
+    <div class="secgrid">
+      <div><div class="tcv secstage"><canvas id="secCv"></canvas><div class="tlab"><small>Preview</small><b id="secTitle">Split look</b></div></div>
+        <div class="secstrip" id="secStrip"></div>
+        <div class="secsplits"><span>Split:</span><button data-split="3">3 runs</button><button data-split="2">Roofline + rest</button><button data-split="7">Every run (7)</button><button data-split="add">＋ Add a divider</button></div>
+      </div>
+      <div class="schcard"><div class="sl"><span>Name</span><input type="text" id="secName" value="My split look"><span></span></div>
+        <div id="secParts"></div>
+        <p class="sh">Each section runs its own look from the library, with its own direction and speed. The controller gets one segment per section (max 32).</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================== LOOK BUILDER (builder.js) =========================== -->
+<section id="builder" class="route hidden"></section>
+<section id="simple" class="route hidden"></section>
+
+<!-- =========================== PLAYLISTS =========================== -->
+<section id="playlists" class="route hidden">
+  <div class="topbar">
+    <button class="back" data-back><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Library</button>
+    <div class="crumb"><small>Runs on the controller, even if the app is closed</small><b>▶ Playlists</b></div>
+    <div class="state"><span class="aistat" id="plStat"></span><button class="btn" id="plStop">Stop playlist</button><button class="btn push" id="plStart" style="min-width:190px"><span>Start on WLED</span></button></div>
+  </div>
+  <div class="schpage">
+    <div class="plgrid">
+      <div><div id="plList"></div><button class="btn" id="plNew" style="width:100%;margin-top:6px">＋ New playlist</button></div>
+      <div class="schcard" id="plEdit"></div>
+    </div>
+  </div>
+</section>
+
+<!-- =========================== CONTROLLER =========================== -->
+<section id="controller" class="route hidden">
+  <div class="topbar">
+    <button class="back" data-back><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Library</button>
+    <div class="crumb"><small>Saved on the controller itself</small><b>◉ Controller</b></div>
+    <div class="state"><span class="aistat" id="ctStat"></span><button class="btn" id="ctWled">Open WLED's own page</button><button class="btn push" id="ctSave" style="min-width:170px"><span>Save settings</span></button></div>
+  </div>
+  <div class="schpage"><div class="ctgrid" id="ctGrid"></div></div>
+</section>
+<section id="schedule" class="route hidden">
+  <div class="topbar">
+    <button class="back" id="schBack"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Library</button>
+    <div class="crumb"><small>Runs on the controller, even if the app is closed</small><b>🌙 Schedule</b></div>
+    <div class="state"><span class="aistat" id="schStat"></span><button class="btn" id="schPreview">Try bedtime now</button><button class="btn push" id="schSave" style="min-width:190px"><span>Save schedule</span></button></div>
+  </div>
+  <div class="schpage">
+    <section class="tonight">
+      <div class="tcv"><canvas id="tonightCv"></canvas><div class="tlab"><small id="tWhy">Tonight</small><b id="tName">…</b></div></div>
+      <div class="tright"><h3>Tonight</h3><div class="tline" id="tLine"></div><p class="sh" id="clockInfo"></p></div>
+    </section>
+    <h2 class="schh">Every night</h2>
+    <div class="schgrid">
+      <section class="schcard"><h3>🌆 Lights on</h3>
+        <label class="sr"><input type="radio" name="onMode" value="sunset"> At sunset <input type="number" id="onOffset" min="-59" max="59" step="5" class="sn"> min <small>(+ after, − before)</small></label>
+        <label class="sr"><input type="radio" name="onMode" value="time"> At <input type="time" id="onTime"></label>
+        <label class="sr"><input type="radio" name="onMode" value="none"> Don’t turn on automatically</label>
+        <div class="sl"><span>Usual look</span><select id="eveLook"></select></div>
+        <p class="sh">Calendar programs and selected team-event days below override this on their nights.</p>
+      </section>
+      <section class="schcard night"><h3>🌙 Bedtime</h3>
+        <label class="sw2"><input type="checkbox" id="nightOn"> Change the lights at bedtime</label>
+        <div class="sl"><span>Sun–Thu</span><input type="time" id="nightTime"></div>
+        <div class="sl"><span>Fri–Sat</span><input type="time" id="nightTimeWE"></div>
+        <label class="sr"><input type="radio" name="nightMode" value="dim"> Just dim, keep the pattern</label>
+        <label class="sr"><input type="radio" name="nightMode" value="look"> Switch to a calmer look</label>
+        <div class="sl" id="nightLookRow"><span>Look</span><select id="nightLook"></select></div>
+        <div class="sl"><span>Brightness</span><input type="range" id="nightBri" min="1" max="60" step="1"><output id="nightBriO"></output></div>
+        <div class="sl"><span>Fade over</span><select id="nightFade"><option value="0">instant</option><option value="1">1 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="30">30 min</option></select></div>
+      </section>
+      <section class="schcard"><h3>⏻ Lights off</h3>
+        <label class="sr"><input type="radio" name="offMode" value="sunrise"> At sunrise</label>
+        <label class="sr"><input type="radio" name="offMode" value="time"> At <input type="time" id="offTime"></label>
+        <label class="sr"><input type="radio" name="offMode" value="never"> Never (stays dimmed until the next evening)</label>
+      </section>
+    </div>
+    <div class="schgrid two">
+      <section class="schcard"><h3>📅 Calendar</h3>
+        <p class="sh">A look for a date range. When programs overlap, the one that starts later wins.</p>
+        <div id="progs"></div>
+        <div class="quick" id="progQuick"></div>
+      </section>
+    </div>
+    <h2 class="schh">Next 3 weeks</h2>
+    <div class="nights" id="nights"></div>
+  </div>
+</section>
+<style>
+.dirsel{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.dirsel button{background:var(--panel-2);border:1px solid var(--line);border-radius:12px;padding:10px;cursor:pointer;text-align:left;color:var(--muted);display:flex;flex-direction:column;gap:2px}
+.dirsel button svg{width:100%;height:16px;margin-bottom:4px}
+.dirsel button b{color:var(--text);font-weight:600;font-size:13px}.dirsel button small{font-size:11px;color:var(--dim)}
+.dirsel button.on{border-color:var(--accent);background:rgba(98,214,130,.08);color:var(--accent)}
+
+.secgrid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(360px,1fr);gap:18px;align-items:start}
+.secstage{aspect-ratio:16/10}
+.secstrip{display:flex;height:14px;border-radius:7px;overflow:hidden;margin:10px 0 6px;border:1px solid rgba(45,56,49,.35)}
+.secstrip i{height:100%}
+.secsplits{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12px;color:#98a79d}
+.secsplits button,.chipb{background:#1b231e;border:1px solid rgba(45,56,49,.35);border-radius:9px;padding:5px 10px;color:#f4f7f5;cursor:pointer;font:12px Inter,sans-serif}
+.chipb.on{border-color:#62d682;color:#62d682;background:rgba(98,214,130,.08)}
+.part{display:grid;grid-template-columns:12px 1fr;gap:12px;padding:12px;border:1px solid rgba(45,56,49,.35);border-radius:12px;background:#141a17}
+.part .bar{border-radius:5px}
+.part .ph{display:flex;justify-content:space-between;gap:8px;align-items:center}.part .ph b{font:600 14px "Space Grotesk",Inter,sans-serif}
+.part .rg{font-size:12px;color:#98a79d;display:flex;gap:6px;align-items:center;margin:4px 0 8px}.part .rg input{width:56px}
+.part select{width:100%}
+.part .opts{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+.part .x{background:none;border:0;color:#6f8175;cursor:pointer;font-size:16px}
+#secParts{display:flex;flex-direction:column;gap:8px}
+.plgrid{display:grid;grid-template-columns:280px 1fr;gap:18px;align-items:start}
+.plitem{padding:12px 14px;border:1px solid rgba(45,56,49,.35);border-radius:12px;margin-bottom:8px;cursor:pointer;background:#1b231e}
+.plitem.on{border-color:#62d682;background:rgba(98,214,130,.08)}.plitem b{display:block;font-weight:600}.plitem small{color:#98a79d}
+.plitem .live{color:#4dffa6;font-size:11px;font-weight:600}
+.plstep{display:grid;grid-template-columns:22px 1fr 120px 120px 26px;gap:10px;align-items:center;padding:8px 10px;border:1px solid rgba(45,56,49,.35);border-radius:11px;background:#141a17}
+.plstep .g{color:#6f8175;cursor:grab;text-align:center}.plstep .x{background:none;border:0;color:#6f8175;cursor:pointer;font-size:16px}
+.plstep label{display:flex;align-items:center;gap:6px;font-size:12px;color:#98a79d}.plstep label input{width:54px}
+.pltl{display:flex;height:14px;border-radius:7px;overflow:hidden;border:1px solid rgba(45,56,49,.35)}
+#plSteps{display:flex;flex-direction:column;gap:7px}
+.ctgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:14px}
+.ctgrid .schcard p.sh{margin:0}
+.drifttl{display:flex;justify-content:space-between;gap:8px;padding:12px 10px 6px;border-radius:10px;border:1px solid rgba(45,56,49,.35);background:linear-gradient(90deg,#ff9a3d,#ff7a1a 35%,#c4400a 70%,#5a1404);font-size:11px;color:#fff;text-shadow:0 1px 4px #000;min-height:44px;align-items:flex-end}
+.rtab{overflow-x:auto}.rtab table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}.rtab th{text-align:left;color:#98a79d;font-weight:500;font-size:11px;letter-spacing:.06em;text-transform:uppercase;padding:5px 8px 5px 0;border-bottom:1px solid rgba(45,56,49,.35)}.rtab td{padding:6px 8px 6px 0;border-bottom:1px solid rgba(45,56,49,.18);white-space:nowrap}
+.rpill{font-size:11px;border-radius:999px;padding:1px 8px;border:1px solid rgba(71,94,77,.4)}.rpill.r{color:#ff8f8f;border-color:rgba(255,93,108,.5)}.rpill.g{color:#8affc8;border-color:rgba(77,255,166,.45)}.rpill.w{color:#62d682;border-color:rgba(98,214,130,.5)}
+.momcard{grid-column:1/-1}
+.momrow{display:grid;grid-template-columns:1.1fr 1.3fr 100px 140px auto;gap:8px;align-items:center;padding:10px;border:1px solid rgba(45,56,49,.35);border-radius:12px;background:#141a17}
+.momrow .momlink{grid-column:1/-1;overflow-x:auto;white-space:nowrap;padding:4px 8px}
+.momact{display:flex;gap:6px;align-items:center}.momact .x{background:none;border:0;color:#6f8175;cursor:pointer;font-size:16px}
+#momList{display:flex;flex-direction:column;gap:8px}
+.trig{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.trig div{border:1px solid rgba(45,56,49,.35);border-radius:12px;padding:10px;background:#141a17;font-size:12.5px;color:#a9b4cf}.trig b{display:block;color:#f4f7f5;margin-bottom:3px}
+@media (max-width:1100px){.momrow{grid-template-columns:1fr 1fr}.trig{grid-template-columns:1fr}}
+
+.sl.wide{grid-template-columns:170px 1fr auto}.sl.wide small{color:#6f8175}
+.tg{display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:13px}
+.meter{display:flex;gap:3px;height:36px;align-items:flex-end}.meter i{flex:1;background:linear-gradient(#4dffa6,#1d7a55);border-radius:2px;min-height:2px;transition:height .15s}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#98a79d;background:#141a17;border:1px solid rgba(45,56,49,.35);padding:1px 6px;border-radius:6px}
+@media (max-width:1100px){.secgrid,.plgrid{grid-template-columns:1fr}}
+#schedule .topbar,#sections .topbar,#playlists .topbar,#controller .topbar{padding-top:14px;padding-bottom:14px;height:auto}
+#schedule .topbar .btn,#sections .topbar .btn,#playlists .topbar .btn,#controller .topbar .btn{height:42px}
+#schSave{height:42px!important;min-width:170px;font-size:15px}
+.schpage{padding:22px 28px 60px;overflow-y:auto;height:calc(100vh - 72px)}
+.schh{font:600 18px "Space Grotesk",Inter,sans-serif;margin:22px 0 10px}
+.tonight{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:18px;background:#141a17;border:1px solid rgba(45,56,49,.35);border-radius:18px;padding:14px}
+.tcv{position:relative;border-radius:14px;overflow:hidden;aspect-ratio:16/9;background:#101612}.tcv canvas{width:100%;height:100%;display:block}
+.tlab{position:absolute;left:14px;bottom:12px;text-shadow:0 2px 12px #000}.tlab small{display:block;color:#b9f4c9;font-size:12px;font-weight:600}.tlab b{font:600 22px "Space Grotesk",Inter,sans-serif}
+.tright{display:flex;flex-direction:column;justify-content:center;gap:10px}.tright h3{margin:0;font:600 20px "Space Grotesk",Inter,sans-serif}
+.tline{display:flex;flex-direction:column;gap:8px}
+.tl{display:grid;grid-template-columns:92px 22px 1fr;align-items:center;gap:8px;font-size:14px;color:#c3cbe0}.tl b{font:600 15px "Space Grotesk",Inter,sans-serif;color:#f4f7f5;text-align:right}.tl i{width:12px;height:12px;border-radius:50%;justify-self:center;font-style:normal}
+.schgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.schgrid.two{grid-template-columns:1.4fr 1fr;margin-top:12px}
+.schcard{background:#1b231e;border:1px solid rgba(45,56,49,.35);border-radius:16px;padding:14px;display:flex;flex-direction:column;gap:9px}
+.schcard.night{border-color:rgba(98,214,130,.45);background:linear-gradient(180deg,rgba(98,214,130,.06),#1b231e)}
+.schcard h3{margin:0 0 2px;font:600 16px "Space Grotesk",Inter,sans-serif}
+.sr,.sw2{display:flex;align-items:center;gap:7px;font-size:13.5px;color:#c3cbe0;cursor:pointer;flex-wrap:wrap}
+.sr input[type=radio],.sw2 input{accent-color:#62d682}.sr small{color:#6f8175}
+.sl{display:grid;grid-template-columns:84px 1fr auto;gap:8px;align-items:center;font-size:13px;color:#98a79d}
+.sl output{color:#f4f7f5;font:600 13px "Space Grotesk",Inter,sans-serif;min-width:38px;text-align:right}.sl input[type=range]{accent-color:#62d682}
+.schpage input[type=time],.schpage input[type=number],.schpage input[type=date],.schpage input[type=text],.schpage select{background:#141a17;border:1px solid rgba(71,94,77,.4);border-radius:9px;color:#f4f7f5;font:13px Inter,sans-serif;padding:5px 7px;color-scheme:dark;min-width:0}
+.sn{width:62px}.sh{font-size:12px;color:#6f8175;margin:0}
+.prog{display:grid;grid-template-columns:18px minmax(0,1.1fr) 128px 128px minmax(0,1.2fr) 26px;gap:6px;align-items:center;margin-bottom:6px}
+.prog input[type=checkbox]{accent-color:#62d682}.prog .x{border:0;background:none;color:#6f8175;font-size:18px;cursor:pointer}.prog .x:hover{color:#ff5d6c}
+.quick{display:flex;flex-wrap:wrap;gap:6px}.quick button{border:1px dashed rgba(98,214,130,.45);background:none;color:#b9f4c9;border-radius:999px;padding:4px 10px;font:500 12px Inter,sans-serif;cursor:pointer}
+.games{display:flex;flex-direction:column;gap:4px;max-height:210px;overflow-y:auto}.games div{display:grid;grid-template-columns:92px 1fr auto;gap:8px;font-size:12.5px;color:#c3cbe0;padding:4px 6px;border-radius:8px;background:#141a17}.games em{color:#6f8175;font-style:normal}
+.nights{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
+.nt{background:#1b231e;border:1px solid rgba(45,56,49,.35);border-radius:12px;padding:9px;display:flex;flex-direction:column;gap:4px;cursor:pointer;min-width:0}
+.nt:hover{border-color:#62d682}.nt.today{border-color:#4dffa6}.nt small{color:#98a79d;font-size:11.5px}.nt b{font:600 13.5px "Space Grotesk",Inter,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nt .sw{display:flex;gap:3px}.nt .sw i{width:12px;height:12px;border-radius:50%}.nt em{font-style:normal;font-size:11px;color:#b9f4c9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.nt em.default{color:#6f8175}
+@media (max-width:1100px){.schgrid,.schgrid.two,.tonight{grid-template-columns:1fr}.nights{grid-template-columns:repeat(4,1fr)}}
+</style>
+
+<style>
+/* colours: swatch row + per-bulb */
+.cmode{display:inline-flex;gap:2px;background:#141a17;border:1px solid rgba(71,94,77,.4);border-radius:10px;padding:2px;margin-bottom:8px}
+.cmode button{border:0;background:none;color:#98a79d;font:600 12px Inter,sans-serif;padding:5px 11px;border-radius:8px;cursor:pointer}
+.cmode button.on{background:linear-gradient(180deg,#7ce59a,#35b354);color:#092211}
+.cstripw{position:relative}
+.cstrip{display:block;width:100%;height:14px;border-radius:6px;background:#101612;cursor:crosshair}
+.ctip{position:absolute;top:20px;transform:translateX(-50%);background:rgba(3,5,10,.94);border:1px solid #2a3654;color:#f4f7f5;font-size:11.5px;padding:5px 9px;border-radius:8px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .1s;z-index:5}
+.ctip.on{opacity:1}
+.cmodebar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.cmodebar .cmode{margin-bottom:0}
+.adjnote{margin:0 0 12px;padding:9px 12px;border-radius:10px;background:rgba(98,214,130,.07);border:1px solid rgba(98,214,130,.25);color:#c9b48f;font-size:12px;line-height:1.45}
+.card .sw i.palsw{width:54px;border-radius:5px}
+.lbltog{border:1px solid #24304a;background:transparent;color:#8a96b4;font:600 12px Inter,sans-serif;border-radius:10px;padding:7px 11px;cursor:pointer}
+.lbltog:hover{color:#f4f7f5;border-color:#3a4868}
+.lbltog.on{color:#62d682;border-color:rgba(98,214,130,.55);background:rgba(98,214,130,.08)}
+.sw2t.hl{outline:2px solid #ffe2bd;outline-offset:2px}
+.seqrow.hl{border-color:#3a4868;background:rgba(17,26,46,.9)}
+.cstrip-l{display:flex;justify-content:space-between;font-size:10.5px;color:#6f8175;margin:3px 0 9px}
+.swrow{display:flex;flex-wrap:wrap;gap:8px}
+.sw2t{position:relative;width:56px;height:56px;border-radius:14px;background:var(--c);box-shadow:inset 0 0 18px rgba(0,0,0,.35),0 0 14px color-mix(in srgb,var(--c) 45%,transparent);cursor:grab;border:1px solid rgba(255,255,255,.12)}
+.sw2t.dragging{opacity:.4}
+.sw2t input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+.sw2t em{position:absolute;left:6px;bottom:4px;font:700 11px Inter,sans-serif;color:rgba(0,0,0,.65);font-style:normal;pointer-events:none}
+.sw2t .lk,.sw2t .rm{position:absolute;top:3px;width:20px;height:20px;border-radius:7px;border:0;background:rgba(0,0,0,.45);color:#fff;font-size:10px;cursor:pointer;padding:0;opacity:0;transition:opacity .12s;z-index:2}
+.sw2t .lk{left:3px}.sw2t .rm{right:3px;font-size:13px;line-height:1}
+.sw2t:hover .lk,.sw2t:hover .rm,.sw2t .lk.on{opacity:1}
+.sw2add{width:56px;height:56px;border-radius:14px;border:1px dashed rgba(98,214,130,.55);background:none;color:#62d682;font-size:24px;cursor:pointer}
+.crow{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.seg2{display:inline-flex;align-items:center;gap:2px;background:#141a17;border:1px solid rgba(71,94,77,.4);border-radius:10px;padding:2px}
+.seg2 span{font-size:11.5px;color:#98a79d;padding:0 6px}
+.seg2 button{border:0;background:none;color:#98a79d;font:600 12px Inter,sans-serif;padding:5px 10px;border-radius:8px;cursor:pointer}
+.seg2 button.on{background:#18233c;color:#f4f7f5;box-shadow:inset 0 0 0 1px #62d682}
+.seg2 button:disabled{opacity:.35;cursor:not-allowed}
+.cnote{font-size:12px;color:#98a79d;margin:8px 0 0}.cnote b{color:#b9f4c9}
+.linkbtn{display:block;margin-top:8px;border:0;background:none;color:#62d682;font:500 12.5px Inter,sans-serif;cursor:pointer;padding:0;text-align:left}
+.strand{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding:8px 10px;background:#101612;border-radius:12px;margin-bottom:8px}
+.strand i{width:13px;height:13px;border-radius:50%}.strand i.gap{background:#1a2133;box-shadow:none}
+.strand span{font-size:11.5px;color:#98a79d;margin-left:auto}
+.seqlist{display:flex;flex-direction:column;gap:5px}
+.seqrow{display:grid;grid-template-columns:16px 34px 1fr auto 24px 22px;gap:8px;align-items:center;background:#141a17;border:1px solid rgba(45,56,49,.35);border-radius:10px;padding:5px 7px}
+.seqrow .grip{color:#6f8175;cursor:grab;font-size:13px}
+.sqc{position:relative;width:30px;height:24px;border-radius:7px;cursor:pointer}.sqc input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.sqgap{font-size:11px;color:#6f8175;text-align:center}
+.seqrow .dots{display:flex;gap:3px}.seqrow .dots i{width:11px;height:11px;border-radius:50%}.seqrow .dots i.gap{background:#1a2133;border:1px dashed #33405f}
+.step{display:inline-flex;align-items:center;gap:6px}.step button{width:22px;height:22px;border-radius:7px;border:1px solid rgba(71,94,77,.4);background:#1b231e;color:#f4f7f5;cursor:pointer}.step b{font:600 13px "Space Grotesk";min-width:10px;text-align:center}
+.seqrow .lk{border:0;background:none;cursor:pointer;font-size:12px}.seqrow .rm{border:0;background:none;color:#6f8175;font-size:16px;cursor:pointer}.seqrow .rm:hover{color:#ff5d6c}
+.bpre{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.bpre button{display:flex;align-items:center;gap:6px;border:1px solid rgba(71,94,77,.35);background:#1b231e;color:#c3cbe0;border-radius:999px;padding:4px 10px;font:500 12px Inter,sans-serif;cursor:pointer}
+.bpre button i{display:flex;gap:2px}.bpre u{width:8px;height:8px;border-radius:50%}
+.btn.sm{height:30px;padding:0 11px;font-size:12.5px;border-radius:9px}
+</style>
+<script src="catalog.js"></script>
+<script src="tlfx.js"></script>
+<script src="builder.js"></script>
+<script src="motions.js"></script>
+<script src="simple.js"></script>
+<script src="ask.js"></script>
+<script src="demo-data.js"></script>
+<script src="demo-shim.js"></script>
+<script src="app.js"></script>
+
+
+
+<style>
+:root{color-scheme:dark;--brand-spectrum:linear-gradient(100deg,#ed2433 0%,#74297b 24%,#34b356 49%,#3656a4 73%,#f7c326 100%)} body{background:#0b0e0d}
+body:before{content:"";position:fixed;inset:0 0 auto;height:5px;background:var(--brand-spectrum);z-index:100;pointer-events:none}
+.demotag{position:fixed;z-index:60;inset:0 0 auto;height:30px;display:flex;gap:12px;align-items:center;justify-content:center;background:#101612;border-bottom:1px solid rgba(98,214,130,.35);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));font:12px/1 Inter,system-ui,sans-serif;color:#f4f7f5;white-space:nowrap;overflow:hidden}
+.demotag b{color:#62d682;letter-spacing:.08em;font-size:11px}.demotag span{color:#98a79d;overflow:hidden;text-overflow:ellipsis}
+.demotag button{background:none;border:1px solid rgba(98,214,130,.4);border-radius:7px;color:#b9f4c9;font:11px Inter,sans-serif;padding:3px 8px;cursor:pointer;flex:none}
+.demotag button:focus-visible{outline:2px solid #62d682;outline-offset:2px}
+.route{top:30px!important}.schpage{height:calc(100vh - 102px)!important}
+.narrow{display:none}
+@media (max-width:820px){.narrow{display:block;position:fixed;inset:0;z-index:70;background:#0b0e0d;color:#f4f7f5;padding:max(16px,env(safe-area-inset-left,0px));font:15px/1.5 Inter,system-ui,sans-serif}
+.narrow div{max-width:420px;margin:18vh auto 0;display:flex;flex-direction:column;gap:12px}.narrow h1{font:600 24px "Space Grotesk",Inter,sans-serif;margin:0;text-wrap:balance}.narrow p{margin:0;color:#98a79d}.narrow img{border-radius:14px;max-width:100%}}
+</style>
+<div class="demotag" role="note"><b>DEMO</b><span>A pretend roof: Push lights up the picture, not a real house. Changes stay in your browser.</span><button type="button" onclick="location.hash='wiring'">Wiring &amp; setup</button><button type="button" onclick="__demoReset()">Reset demo</button></div>
+<div class="narrow"><div><img src="trimlight-logo.svg" alt="Trimlight"><h1>Trimlight Home Studio · WLED</h1><p>This WLED edition is a lighting app for a house roofline: a library of animated looks, an editor, sections, playlists and a nightly schedule. It needs a wider screen. Open the link on a laptop or desktop.</p></div></div>
+
+<style>
+.wg{position:fixed;inset:30px 0 0;z-index:55;background:#0b0e0d;color:#f4f7f5;overflow-y:auto;font:15px/1.6 Inter,system-ui,sans-serif}
+.wg[hidden]{display:none}
+.wg-in{max-width:980px;margin:0 auto;padding-block:28px 80px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:28px}
+.wg-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap}
+.wg h1{font:600 30px/1.15 "Space Grotesk",Inter,sans-serif;margin:0;text-wrap:balance}
+.wg h2{font:600 19px/1.3 "Space Grotesk",Inter,sans-serif;margin:0 0 10px;text-wrap:balance}
+.wg .lede{color:#a9b4cf;max-width:62ch;margin:8px 0 0}
+.wg .back{background:#1b231e;border:1px solid rgba(71,94,77,.4);border-radius:10px;color:#f4f7f5;font:14px Inter,sans-serif;padding:9px 14px;cursor:pointer;flex:none}
+.wg .back:focus-visible,.wg a:focus-visible{outline:2px solid #62d682;outline-offset:2px}
+.wg figure{margin:0;background:#141a17;border:1px solid rgba(45,56,49,.35);border-radius:16px;padding:18px;overflow-x:auto}
+.wg figure svg{display:block;width:100%;min-width:640px;height:auto;color:#cdd5ea}
+.wg figcaption{color:#98a79d;font-size:13px;margin-top:10px;max-width:70ch}
+.wg .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.wg .fact{background:#141a17;border:1px solid rgba(45,56,49,.35);border-radius:12px;padding:12px 14px}
+.wg .fact small{display:block;color:#98a79d;font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.wg .fact b{font:600 15px "Space Grotesk",Inter,sans-serif}
+.wg ol{margin:0;padding-left:22px;display:flex;flex-direction:column;gap:8px;max-width:72ch}
+.wg li::marker{color:#62d682;font-weight:600}
+.wg li b{color:#fff}
+.wg .warn{border-left:3px solid #ff5d6c;background:rgba(255,93,108,.07);padding:10px 14px;border-radius:0 10px 10px 0;max-width:72ch}
+.wg .tablewrap{overflow-x:auto}
+.wg table{border-collapse:collapse;min-width:560px;font-size:14px;font-variant-numeric:tabular-nums}
+.wg th{text-align:left;color:#98a79d;font-weight:500;font-size:12px;letter-spacing:.06em;text-transform:uppercase;padding:6px 14px 6px 0;border-bottom:1px solid rgba(45,56,49,.35)}
+.wg td{padding:8px 14px 8px 0;border-bottom:1px solid rgba(45,56,49,.18)}
+.wg code{font:13px ui-monospace,Menlo,monospace;background:#1b231e;border:1px solid rgba(45,56,49,.35);border-radius:6px;padding:1px 5px}
+.wg .note{color:#a9b4cf;max-width:72ch;margin:0}
+.wg .grid2{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media (max-width:760px){.wg .grid2{grid-template-columns:1fr}.wg h1{font-size:25px}}
+</style>
+<section class="wg" id="wiringGuide" hidden aria-label="Wiring and setup guide">
+  <div class="wg-in">
+    <div class="wg-top"><div><h1>Using WLED with roofline pixels</h1><p class="lede">A general setup checklist for compatible pixel systems. Controller terminals, pin assignments, voltage, pixel protocol, and power requirements vary by installation; verify every value against the equipment documentation.</p></div><button class="back" type="button" id="wgClose">← Back to the app</button></div>
+    <div class="grid2">
+      <div><h2>Before connecting hardware</h2><ol><li>Record the current controller settings and label each low-voltage data run before disconnecting anything.</li><li>Confirm pixel voltage, protocol, color order, ground reference, and maximum current from the light and power-supply documentation.</li><li>Check that the WLED controller supports the required voltage and pixel protocol. Select output pins from that controller's documentation.</li><li>Calculate each run's pixel count and total load; set conservative power limits appropriate for the supply and wiring.</li></ol></div>
+      <div><h2>Configure WLED</h2><ol><li>Set the LED type, color order, output pins, and pixel count for each run.</li><li>Configure the device name, network connection, time zone, and location only if a local schedule needs sunset timing.</li><li>Test each run at low brightness with a simple static color before trying animated effects.</li><li>Verify direction, grouping, spacing, and power behavior on the installed system before saving a schedule.</li></ol></div>
+    </div>
+    <p class="note"><b>Power and wiring are installation-specific.</b> Do not assume a controller output can power the pixels directly, that two devices share a compatible ground, or that a pin map from another installation applies to yours. Follow the manufacturers' wiring diagrams and have a qualified electrician handle mains-voltage work.</p>
+  </div>
+</section>
+<script>
+(function () {
+  const g = document.getElementById('wiringGuide');
+  const sync = () => { g.hidden = location.hash !== '#wiring'; if (!g.hidden) g.scrollTop = 0; };
+  addEventListener('hashchange', sync); sync();
+  document.getElementById('wgClose').onclick = () => { location.hash = 'library'; };
+})();
+</script>
+
+</body></html>
