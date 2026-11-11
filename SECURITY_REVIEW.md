@@ -1,18 +1,20 @@
 # Source review
 
-Reviewed as a static browser demo; no production backend or hardware integration is present in this snapshot.
+Reviewed as a browser application with a simulated demo mode and an opt-in direct WLED mode.
 
 ## Confirmed behavior
 
-- `site/demo-shim.js` replaces application API requests with simulated responses and local browser storage. The demo does not send commands to a real controller.
-- No dependency manager or third-party runtime packages are required; Docker serves the static files with NGINX.
-- The application includes direct WLED request paths in `site/app.js`, but they are intercepted in the shipped demo by `demo-shim.js`. Removing the shim without adding a tested backend and an explicit connection design would expose the browser to local-network/CORS and mixed-content constraints.
-- AI, controller status, schedules, and persistent server-side settings depend on `/api/*` routes that are not implemented in this repository.
+- Demo mode intercepts WLED API and WebSocket requests and uses simulated controller responses plus browser-local storage.
+- Real mode sends HTTP requests directly to the configured WLED address, opens WLED's `/ws` WebSocket, and stores app preferences in browser local storage. No server-side service is included.
+- The setup panel validates the address, reads `/json/si` and `/json/cfg`, and can update only LED output lengths, start offsets, total count, and color order while preserving the rest of the fetched WLED configuration.
+- The browser's direct network path depends on WLED CORS support. WLED WebSockets are unencrypted; browsers block `ws://` when the app itself is served over HTTPS. Use HTTP on a trusted LAN or a suitable local proxy.
+- HTTP-authenticated WLED controllers are not supported. The app does not collect or store controller credentials.
+- WLED timer and preset operations are available for the basic nightly schedule. Date-range calendar programs, AI generation, and server-side sync still depend on absent backend services.
 
 ## Review limitations
 
-This review checks JavaScript syntax, static asset references, Docker configuration, and visible request/storage paths. It does not validate WLED effect fidelity against hardware, network behavior, installation wiring, or a real deployment. The included setup guide is generic and does not define hardware-specific pin maps or power limits.
+This review validates JavaScript parsing, local assets, demo configuration, and the settings/request code path. It has not been run against a physical WLED controller. Effect fidelity, hardware pin assignments, LED type, voltage, current limits, device-specific firmware, network isolation, and real schedule behavior must be confirmed on the target equipment.
 
-## Before enabling real hardware control
+## Before deployment
 
-Implement and review an authenticated backend, validate WLED host inputs and request boundaries, add CSRF/origin protections where applicable, and test on a non-production controller. Keep demo mode explicit until those pieces exist.
+Keep WLED on a trusted LAN. Do not expose its local API to the public internet. Review any WLED configuration write before applying it; the settings form intentionally limits its writes to output lengths, offsets, total LED count, and color order.
