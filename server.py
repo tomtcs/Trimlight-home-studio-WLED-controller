@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Small same-origin API and SQLite persistence for Trimlight Home Studio."""
 import json
+import math
 import os
 import re
 import sqlite3
@@ -10,7 +11,7 @@ from urllib.parse import urlsplit
 
 DB_PATH = os.environ.get("STUDIO_DB", "/data/studio.sqlite3")
 MAX_BODY = 8 * 1024 * 1024
-DEFAULT_SETTINGS = {"mode": "demo", "host": "", "channelCount": 4, "outputs": [], "photo": "", "photoSize": [2000, 1500]}
+DEFAULT_SETTINGS = {"mode": "demo", "host": "", "channelCount": 4, "outputs": [], "photo": "", "photoSize": [2000, 1500], "houseViews": {}}
 
 
 def connect():
@@ -82,6 +83,42 @@ def validate_settings(settings):
     if photo:
         if not isinstance(photo, str) or len(photo) > 2_300_000 or not re.match(r"^data:image/(jpeg|png|webp);base64,", photo):
             raise ValueError("The home photo must be a resized JPEG, PNG, or WebP image under the storage limit.")
+    house_views = settings.get("houseViews", {})
+    allowed_sides = {"front", "right", "rear", "left", "shed"}
+    if not isinstance(house_views, dict) or set(house_views) - allowed_sides:
+        raise ValueError("House views must use front, right, rear, left, or shed.")
+    photo_total = 0
+    for side, view in house_views.items():
+        if not isinstance(view, dict):
+            raise ValueError("Each house view must be an object.")
+        image = view.get("photo", "")
+        if image and (not isinstance(image, str) or len(image) > 180_000 or not re.match(r"^data:image/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$", image)):
+            raise ValueError("Each elevation photo must be a resized JPG, PNG, or WebP image under 180 KB.")
+        photo_total += len(image or "")
+        if photo_total > 1_000_000:
+            raise ValueError("The combined house photos exceed the persistent storage limit.")
+        dimensions = view.get("photoSize", [4, 3])
+        if not isinstance(dimensions, list) or len(dimensions) != 2 or any(not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 10000 for n in dimensions):
+            raise ValueError("Elevation photo dimensions are invalid.")
+        lines = view.get("lines", [])
+        if not isinstance(lines, list) or len(lines) > 40:
+            raise ValueError("Each elevation can contain at most 40 traced sections.")
+        ids = set()
+        for line in lines:
+            if not isinstance(line, dict) or not isinstance(line.get("id"), str) or not 1 <= len(line["id"]) <= 128 or line["id"] in ids:
+                raise ValueError("Each traced section must have a unique identifier.")
+            ids.add(line["id"])
+            if line.get("kind") not in ("edge", "ridge") or not isinstance(line.get("name", ""), str) or len(line.get("name", "")) > 48:
+                raise ValueError("Traced sections need a name and a valid roof edge or ridge type.")
+            points = line.get("points")
+            if not isinstance(points, list) or not 2 <= len(points) <= 100:
+                raise ValueError("Each traced section must contain 2 to 100 points.")
+            for point in points:
+                if not isinstance(point, list) or len(point) != 2 or any(not isinstance(n, (int, float)) or isinstance(n, bool) or not math.isfinite(n) or not 0 <= n <= 100 for n in point):
+                    raise ValueError("Traced roofline points must be within the elevation photo.")
+            wires = line.get("wireSegments", [])
+            if not isinstance(wires, list) or len(wires) > len(points) - 1 or any(not isinstance(n, int) or isinstance(n, bool) or not 0 <= n < len(points) - 1 for n in wires) or len(set(wires)) != len(wires):
+                raise ValueError("Wire-only links must refer to unique segments in the traced roofline.")
     return settings
 
 
