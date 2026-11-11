@@ -4,7 +4,11 @@ A WLED-focused lighting interface for configuring output channels, previewing ef
 
 ## Run locally
 
-Use <code>docker compose up -d --build</code> and open <http://localhost:8080>. In **Wiring &amp; setup**, choose **Real WLED controller**, enter its IP address or <code>.local</code> hostname, then select **Test connection**. Review the detected output channels, LED counts, and color order. Upload a front-facing home photo, select **Trace roofline** for each WLED output, and click along the LED path in data-flow order; finish each path with **Finish line**. **Apply settings &amp; connect** writes changed LED counts and color order to WLED, then reconnects the app with the mapped roof geometry. Settings, photo, and traces are stored in that browser only; they are not uploaded to this repository. Optional latitude and longitude values update WLED's location while leaving its configured time zone unchanged.
+Use <code>docker compose up -d --build</code> and open <http://localhost:8080>. In **Wiring &amp; setup**, choose **Real WLED controller**, enter its IP address or <code>.local</code> hostname, then select **Test connection**. Review the detected output channels, LED counts, and color order. Upload a front-facing home photo, select **Trace roofline** for each WLED output, and click along the LED path in data-flow order; finish each path with **Finish line**. **Apply settings &amp; connect** writes changed LED counts and color order to WLED, then reconnects the app with the mapped roof geometry. Optional latitude and longitude values update WLED's location while leaving its configured time zone unchanged.
+
+## Persistent application data
+
+The web container serves the UI; a separate small API container stores the app's records in SQLite at <code>/data/studio.sqlite3</code>. Docker Compose mounts <code>/data</code> from the named <code>studio-data</code> volume, outside either container image. App patterns, edits, playlists, schedules, controller connection/output setup, home photo and trace paths, and named bulb-range sections are saved there and shared by clients using this server. Rebuilding or replacing the containers keeps this volume. <code>docker compose down</code> also keeps it; <code>docker compose down -v</code> removes it. Back up the Docker volume before host migrations or destructive volume cleanup.
 
 ## Network requirements
 
@@ -16,8 +20,9 @@ Never expose WLED's unauthenticated local API to the public internet. This app d
 
 - Real mode reads the controller's effect metadata, palettes, state, and live WebSocket updates, and sends WLED state changes directly.
 - The roof mapper places each channel's LEDs along traced photo paths. Existing saved looks use the resulting LED layout for previews, zones, and WLED segment ranges.
+- The Controller page exposes output counts and a named roof-section manager. Saved bulb ranges appear as reusable zones in the Look Builder and can partition section looks.
 - Channel counts and color order can be applied to existing WLED output entries. The app does not configure GPIO pin assignments, LED type, power limits, Wi-Fi, or other hardware settings.
-- Basic nightly WLED timers and a scheduled look are written to WLED. Date-range calendar programs, AI generation, server-side sync, and custom Studio firmware features need backend services that are not included here.
+- Basic nightly WLED timers and a scheduled look are written to WLED. Date-range calendar programs, AI generation, and custom Studio firmware features still need their respective services or controller extensions.
 - Demo mode remains available and never sends commands to a physical controller.
 
 ## Source and licensing
