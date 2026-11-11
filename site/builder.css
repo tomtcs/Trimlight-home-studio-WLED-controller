@@ -141,6 +141,7 @@
 #builder .sgs button{border:1px solid var(--line);background:var(--panel-2);border-radius:8px;padding:4px 9px;font-size:12px;color:var(--muted);cursor:pointer}
 #builder .sgs button:hover{color:var(--text)}
 #builder .sgs button.on{color:#092211;background:var(--accent);border-color:var(--accent);font-weight:600}
+#builder .sgs button.partial{border-color:#ffb347;color:#ffcf8c;background:#342614}
 #builder .chk{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#c3cbe0;cursor:pointer;margin:6px 0}
 #builder .chk input{accent-color:#62d682}
 #builder .note{font-size:12px;color:var(--muted);background:var(--panel-3);border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:8px 0 12px}
