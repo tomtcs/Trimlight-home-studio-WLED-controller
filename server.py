@@ -92,6 +92,9 @@ def validate_settings(settings):
         if not isinstance(side, dict) or not isinstance(side.get("id"), str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,31}", side["id"]) or side["id"] in side_ids or not isinstance(side.get("label"), str) or not 1 <= len(side["label"].strip()) <= 32:
             raise ValueError("Each house elevation needs a unique identifier and a name from 1 to 32 characters.")
         side_ids.add(side["id"])
+    preview_side = settings.get("previewSide")
+    if preview_side is not None and preview_side not in side_ids:
+        raise ValueError("The preview elevation must match one of the configured house sides.")
     house_views = settings.get("houseViews", {})
     if not isinstance(house_views, dict) or set(house_views) - side_ids:
         raise ValueError("House views must match the configured elevations.")
