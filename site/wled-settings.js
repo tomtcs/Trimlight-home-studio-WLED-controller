@@ -238,14 +238,14 @@
     } finally { clearTimeout(timer); }
   });
   document.getElementById('applyWled').addEventListener('click', async () => {
-    let host, outputs;
+    let host, outputs, latitude, longitude;
     try {
       const isDemo = mode.value === 'demo';
       host = isDemo ? '' : hostOf(addr.value); outputs = readRows();
       const selectedChannels = Number(channelCount.value);
       if (![2, 4, 6].includes(selectedChannels)) throw new Error('Select a 2-, 4-, or 6-channel controller.');
       if (outputs.length > selectedChannels) throw new Error(`${outputs.length} configured outputs exceed the selected ${selectedChannels}-channel capacity. Remove unused rows or select a larger controller.`);
-      const latitude = lat.value.trim() === '' ? null : Number(lat.value), longitude = lon.value.trim() === '' ? null : Number(lon.value);
+      latitude = lat.value.trim() === '' ? null : Number(lat.value); longitude = lon.value.trim() === '' ? null : Number(lon.value);
       if ((latitude === null) !== (longitude === null)) throw new Error('Enter both latitude and longitude, or leave both blank to keep the WLED location.');
       if (latitude !== null && (!Number.isFinite(latitude) || latitude < -66.6 || latitude > 66.6 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180)) throw new Error('Enter a valid latitude (-66.6 to 66.6) and longitude (-180 to 180).');
       const total = outputs.reduce((n, o) => n + o.leds, 0);
