@@ -1,8 +1,8 @@
-/* Demo build: a pretend WLED controller + the Studio server's API, all in the browser.
-   Nothing here talks to a real roof. Each visitor's edits stay in their own browser (localStorage). */
+/* Browser bridge: simulates WLED in demo mode and provides browser-local app state in either mode.
+   Real-controller WLED requests pass through directly to the configured controller. */
 (function () {
   'use strict';
-  const D = window.DEMO_DATA, TL = window.TLFX, HOST = 'demo-roof', N = D.layout.runs.reduce((a, r) => a + r.leds, 0);
+  const D = window.DEMO_DATA, TL = window.TLFX, HOST = 'demo-roof', PREFS = window.TLSettings.read(), REAL = PREFS.mode === 'wled', LAYOUT = window.TLSettings.layout(), N = LAYOUT.runs.reduce((a, r) => a + r.leds, 0);
   const KEY = 'tlstudio-demo-v1';
   const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } };
   const store = o => { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch { } };
@@ -91,7 +91,7 @@
     close() { clearInterval(this._t); this.readyState = 3; sockets.delete(this); this.onclose && this.onclose({}); }
   }
   const RealWS = window.WebSocket;
-  window.WebSocket = function (url, p) { return String(url).includes(HOST) ? new DemoSocket(url) : new RealWS(url, p); };
+  window.WebSocket = function (url, p) { return !REAL && String(url).includes(HOST) ? new DemoSocket(url) : new RealWS(url, p); };
 
   // ---------------- fetch: the Studio server + the pretend controller ----------------
   const json = (o, code) => new Response(JSON.stringify(o), { status: code || 200, headers: { 'Content-Type': 'application/json' } });
@@ -99,7 +99,7 @@
   window.fetch = async function (url, opt) {
     const u = String(url), m = (opt && opt.method || 'GET').toUpperCase(), body = opt && opt.body;
     const parsed = () => { try { return typeof body === 'string' ? JSON.parse(body) : {}; } catch { return {}; } };
-    if (u.includes(HOST)) {
+    if (!REAL && u.includes(HOST)) {
       const path = u.split(HOST)[1].split('?')[0];
       if (path === '/json/state') { if (m === 'POST') { apply(parsed()); return json({ success: true }); } return json(stateJSON()); }
       if (path === '/json/info') return json(info());
@@ -114,20 +114,33 @@
     }
     if (u.startsWith('/api/')) {
       if (u === '/api/app') { if (m === 'POST') { const b = parsed(); Object.assign(APPSTATE, b); const keep = {}; for (const k in APPSTATE) keep[k] = APPSTATE[k]; store(keep); return json({ ok: true }); } return json(APPSTATE); }
-      if (u === '/api/wled/status') return json({ host: HOST });
+      if (u === '/api/wled/status') return json({ host: REAL ? (PREFS.outputs?.length ? PREFS.host : null) : HOST, mode: REAL ? 'wled' : 'demo' });
       if (u === '/api/fxinfo') return json(D.fxinfo);
-      if (u === '/api/layout') return json(D.layout);
-      if (u.startsWith('/api/schedule/apply')) return json({ ok: true, changed: true, tonight: 'saved (demo)', via: 'demo' });
+      if (u === '/api/layout') return json(LAYOUT);
+      if (u.startsWith('/api/schedule/apply')) {
+        if (!REAL) return json({ ok: true, changed: true, tonight: 'saved (demo)', via: 'demo' });
+        try {
+          const request = parsed(), host = PREFS.host;
+          {
+            const current = await realFetch('http://' + host + '/json/state', { cache: 'no-store' }).then(r => r.json());
+            const savedLook = request.body || { on: current.on, bri: current.bri, seg: current.seg || [] };
+            const preset = Object.assign({}, savedLook, { psave: 240, n: 'Studio · Scheduled look', o: true });
+            const saved = await realFetch('http://' + host + '/json/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preset) });
+            if (!saved.ok) throw new Error('WLED could not save the scheduled look.');
+            await realFetch('http://' + host + '/json/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: current.on, bri: current.bri, transition: 0, seg: current.seg || [] }) });
+          }
+          return json({ ok: true, changed: true, tonight: request.body ? 'preset 240 updated' : 'current WLED look saved to preset 240', via: 'wled' });
+        } catch (e) { return json({ ok: false, error: e.message || 'Could not save the WLED schedule preset.' }, 502); }
+      }
       if (u.startsWith('/api/ai/')) return json({ ok: false, error: 'AI looks are switched off in the demo.' });
       return json({ ok: false, error: 'Not available in the demo' });
     }
     return realFetch(url, opt);
   };
-  window.__demoGet = url => url === '/api/layout' ? D.layout : url === '/api/app' ? APPSTATE : {};
+  window.__demoGet = url => url === '/api/layout' ? LAYOUT : url === '/api/app' ? APPSTATE : {};
 
   // start the pretend roof on the look the app last pushed
-  const lp = APPSTATE.lastPush; presets[3] = { on: true, bri: 180, seg: [Object.assign(segDefaults(0), { fx: 80, sx: 55, ix: 150, pal: 5, col: [[190, 10, 0], [255, 85, 0], [255, 185, 0]] })] };
-  apply(clone(presets[3]), true); st.ps = 3;
+  if (!REAL) { const lp = APPSTATE.lastPush; presets[3] = { on: true, bri: 180, seg: [Object.assign(segDefaults(0), { fx: 80, sx: 55, ix: 150, pal: 5, col: [[190, 10, 0], [255, 85, 0], [255, 185, 0]] })] }; apply(clone(presets[3]), true); st.ps = 3; }
   window.__demoReset = () => { try { localStorage.removeItem(KEY); } catch { } location.reload(); };
-  window.DEMO = true;
+  window.DEMO = !REAL; window.TL_REAL_WLED = REAL;
 })();
