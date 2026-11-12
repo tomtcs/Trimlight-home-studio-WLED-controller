@@ -529,7 +529,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
     </div>
     <div class="schgrid two">
       <section class="schcard"><h3>📅 Calendar</h3>
-        <p class="sh">A look for a date range. When programs overlap, the one that starts later wins.</p>
+        <p class="sh">A look for a date range. When programs overlap, the one that starts later wins. In WLED mode, the Docker API service selects that look at the start of each date in this browser’s time zone and updates the scheduled preset; keep the API container running and set WLED to the same time zone.</p>
         <div id="progs"></div>
         <div class="quick" id="progQuick"></div>
       </section>
@@ -617,7 +617,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .nights{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
 .nt{background:#1b231e;border:1px solid rgba(45,56,49,.35);border-radius:12px;padding:9px;display:flex;flex-direction:column;gap:4px;cursor:pointer;min-width:0}
 .nt:hover{border-color:#62d682}.nt.today{border-color:#4dffa6}.nt small{color:#98a79d;font-size:11.5px}.nt b{font:600 13.5px "Space Grotesk",Inter,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .nt .sw{display:flex;gap:3px}.nt .sw i{width:12px;height:12px;border-radius:50%}.nt em{font-style:normal;font-size:11px;color:#b9f4c9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.nt em.default{color:#6f8175}
+.nt .sw{display:flex;gap:3px}.nt .sw i{width:12px;height:12px;border-radius:50%}.nt em{font-style:normal;font-size:11px;color:#b9f4c9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.nt em.default{color:#6f8175}
 .weekly-looks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.weekly-day{display:flex;flex-direction:column;gap:5px;color:#98a79d;font-size:12px}.weekly-day select{width:100%}.weekly-day.active select{border-color:#62d682;box-shadow:0 0 0 2px rgba(98,214,130,.12)}
 @media (max-width:1100px){.schgrid,.schgrid.two,.tonight{grid-template-columns:1fr}.nights{grid-template-columns:repeat(4,1fr)}}
 @media (max-width:800px){.weekly-looks{grid-template-columns:repeat(2,minmax(0,1fr))}}
