@@ -1195,7 +1195,7 @@
   const bodyOf = id => { if (plName(id)) { const pl = plById(id.slice(3)); return pl && pl.items.length ? plBody(pl) : null; } return id && BY_ID[id] ? Object.assign(wledBody(applyMaster(BY_ID[id].P)), { transition: clamp(Math.round((APP.fade?.sched ?? 2) * 10), 0, 6000) }) : null; };
   const nameOf = id => BY_ID[id]?.name || plName(id);
   const lookSel = (sel, val, withCurrent) => { sel.innerHTML = (withCurrent ? '<option value="current">Whatever I last pushed</option>' : '') + LOOKS.map(l => '<option value="' + l.id + '">' + esc(l.name) + '</option>').join('') + (APP.playlists.length ? '<optgroup label="Playlists">' + APP.playlists.map(pl => '<option value="pl:' + pl.id + '">▶ ' + esc(pl.name) + '</option>').join('') + '</optgroup>' : ''); sel.value = val; };
-  const iso = d => d.toISOString().slice(0, 10);
+  const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   function nthWeekday(y, m, wd, n) { const d = new Date(y, m, 1); while (d.getDay() !== wd) d.setDate(d.getDate() + 1); d.setDate(d.getDate() + 7 * (n - 1)); return d; }
   function quickPrograms() {
     const now = new Date(), y = now.getMonth() >= 10 ? now.getFullYear() : now.getFullYear(), tg = nthWeekday(y, 10, 4, 4);
@@ -1246,9 +1246,12 @@
     const v = n => (document.querySelector('input[name=' + n + ']:checked') || {}).value;
     Object.assign(SC, { onMode: v('onMode'), onOffset: clamp(+$('onOffset').value || 0, -59, 59), onTime: $('onTime').value || '17:00', eveLook: $('eveLook').value, nightOn: $('nightOn').checked, nightTime: $('nightTime').value || '21:30', nightTimeWE: $('nightTimeWE').value || $('nightTime').value || '21:30', nightMode: v('nightMode'), nightLook: $('nightLook').value, nightBri: +$('nightBri').value, nightFade: +$('nightFade').value, offMode: v('offMode'), offTime: $('offTime').value || '01:00' });
     // bodies = the exact WLED settings for each look the schedule uses (the server loads them into preset 240)
-    SC.default = SC.eveLook === 'current' ? { look: 'current', name: 'Whatever you last pushed', body: null } : { look: SC.eveLook, name: nameOf(SC.eveLook), body: bodyOf(SC.eveLook) };
+    const baseLook = SC.eveLook === 'current' ? (houseLookId() || APP.lastPush?.id) : SC.eveLook;
+    SC.default = { look: SC.eveLook, name: SC.eveLook === 'current' ? (APP.lastPush?.name || 'Whatever you last pushed') : nameOf(SC.eveLook), body: baseLook ? bodyOf(baseLook) : null };
     SC.programs.forEach(p => { p.lookName = nameOf(p.look); p.body = bodyOf(p.look); });
     SC.weeklyLooks = Object.fromEntries([...document.querySelectorAll('#weeklyLooks [data-weekday]')].filter(sel => sel.value).map(sel => [sel.dataset.weekday, sel.value]));
+    SC.weeklyBodies = Object.fromEntries(Object.entries(SC.weeklyLooks).map(([dow, id]) => [dow, { look: id, name: nameOf(id), body: bodyOf(id) }]));
+    SC.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   }
   $('schedule').addEventListener('input', e => {
     if (e.target.id === 'nightBri') $('nightBriO').textContent = e.target.value + '%';
@@ -1303,8 +1306,16 @@
     showRoute('schedule'); history.replaceState(null, '', location.href.split('#')[0] + '#schedule');
     if (!vTonight) vTonight = makeView($('tonightCv'), CROP_CARD, 1.4, 2);
     fillSchedule();
+    if (!SC.timezone || !SC.weeklyBodies || SC.programs.some(p => p.on !== false && !p.body)) {
+      readSchedule();
+      fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) }).catch(() => {});
+    }
     refreshNights();
-    try { const i = await wget('/json/info'), c = await wget('/json/cfg'), on = (c.timers?.ins || []).filter(t => t.en && t.macro).length; $('clockInfo').textContent = 'Controller clock ' + (i.time || '?') + ' · ' + on + ' timer' + (on === 1 ? '' : 's') + ' active · internet time ' + (c.if?.ntp?.en ? 'on' : 'off'); } catch { $('clockInfo').textContent = ''; }
+    try {
+      const [i, c, scheduler] = await Promise.all([wget('/json/info'), wget('/json/cfg'), fetch('/api/scheduler/status').then(r => r.json()).catch(() => null)]), on = (c.timers?.ins || []).filter(t => t.en && t.macro).length;
+      const service = window.TL_REAL_WLED && scheduler?.enabled ? ' · Calendar service ' + (scheduler.state === 'error' ? 'error: ' + scheduler.message : (scheduler.message || scheduler.state)) : '';
+      $('clockInfo').textContent = 'Controller clock ' + (i.time || '?') + ' · ' + on + ' timer' + (on === 1 ? '' : 's') + ' active · internet time ' + (c.if?.ntp?.en ? 'on' : 'off') + service;
+    } catch { $('clockInfo').textContent = ''; }
   }
   $('schBack').onclick = () => goLibrary();
   function bedtimeBody() {
@@ -1319,7 +1330,6 @@
     const weeklyMask = weeklyEntries.reduce((mask, [dow]) => mask | DOW_BITS[+dow], 0), usualDaysMask = 127 & ~weeklyMask;
     const btn = $('schSave'); btn.disabled = true; $('schStat').innerHTML = '<span class="aispin"></span>Writing to the controller…';
     try {
-      if (window.TL_REAL_WLED && SC.programs.some(p => p.on !== false)) throw new Error('Date-range calendar programs need a scheduler service and are not applied in direct WLED mode. Remove them, then save the nightly schedule.');
       if (weeklyEntries.length && SC.onMode === 'none') throw new Error('Choose sunset or a set time for “Lights on” before assigning different looks by weekday.');
       if (weeklyEntries.length && SC.onMode === 'sunset' && !V16) throw new Error('This WLED version cannot assign separate sunset looks by weekday. Set “Lights on” to a fixed time or update to WLED 16.');
       await flushPalettes();   // custom palettes used by scheduled looks
@@ -1364,9 +1374,10 @@
       await wpost({ on: before.on, bri: before.bri, transition: 0, seg });
       // tonight's look → preset 240 (the server does this every day; force it now)
       const tonightLook = nightFor(new Date()).look;
-      const ap = await fetch('/api/schedule/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: bodyOf(tonightLook) }) }).then(r => r.json());
+      const tonightDow = new Date().getDay(), tonightSelection = nightFor(new Date()), tonightSlot = SC.weeklyLooks[tonightDow] ? PS_WEEKDAY + tonightDow : PS_TONIGHT;
+      const ap = await fetch('/api/schedule/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: bodyOf(tonightLook), slot: tonightSlot, name: nameOf(tonightLook) || tonightSelection.why }) }).then(r => r.json());
       const c = await wget('/json/cfg'), n = (c.timers?.ins || []).filter(t => t.en && t.macro).length;
-      $('schStat').innerHTML = '✓ Saved · ' + n + ' timers' + (ap.ok ? ' · tonight: ' + esc(ap.tonight || '') : ' · ⚠️ ' + esc(ap.error || ''));
+      $('schStat').innerHTML = '✓ Saved · ' + n + ' timers' + (ap.ok ? ' · tonight: ' + esc(ap.tonight || '') + (SC.programs.some(p => p.on !== false) ? ' · calendar scheduler active in Docker' : '') : ' · ⚠️ ' + esc(ap.error || ''));
       toast('Schedule saved to the controller 🌙'); openSchedule();
     } catch (err) { $('schStat').textContent = '⚠️ ' + err.message; }
     btn.disabled = false;
@@ -1384,10 +1395,12 @@
   // keep the schedule's stored copies of each look in sync with the looks themselves (e.g. after a look is redesigned)
   function refreshScheduleBodies() {
     if (!WL.host) return;
-    const before = JSON.stringify([SC.default?.body, SC.programs.map(p => p.body)]);
-    if (SC.eveLook !== 'current' && (BY_ID[SC.eveLook] || plName(SC.eveLook))) SC.default = { look: SC.eveLook, name: nameOf(SC.eveLook), body: bodyOf(SC.eveLook) };
+    const before = JSON.stringify([SC.default?.body, SC.weeklyBodies, SC.programs.map(p => p.body)]);
+    const baseLook = SC.eveLook === 'current' ? (houseLookId() || APP.lastPush?.id) : SC.eveLook;
+    if (baseLook && (BY_ID[baseLook] || plName(baseLook))) SC.default = { look: SC.eveLook, name: SC.eveLook === 'current' ? (APP.lastPush?.name || 'Whatever you last pushed') : nameOf(baseLook), body: bodyOf(baseLook) };
     SC.programs.forEach(p => { if (BY_ID[p.look]) { p.lookName = BY_ID[p.look].name; p.body = bodyOf(p.look); } });
-    if (JSON.stringify([SC.default?.body, SC.programs.map(p => p.body)]) !== before) fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) });
+    SC.weeklyBodies = Object.fromEntries(Object.entries(SC.weeklyLooks || {}).map(([dow, id]) => [dow, { look: id, name: nameOf(id), body: bodyOf(id) }]));
+    if (JSON.stringify([SC.default?.body, SC.weeklyBodies, SC.programs.map(p => p.body)]) !== before) fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) });
   }
 
 
