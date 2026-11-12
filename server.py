@@ -394,6 +394,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     with database() as db:
-        pass
+        initial_settings = read_state(db, "settings") or DEFAULT_SETTINGS
+    if initial_settings.get("mode") == "wled" and initial_settings.get("host"):
+        scheduler_status(enabled=True, state="starting", message="Waiting for the first WLED schedule check.")
     threading.Thread(target=scheduler_loop, name="wled-calendar-scheduler", daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8000"))), Handler).serve_forever()
