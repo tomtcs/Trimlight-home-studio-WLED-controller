@@ -1463,7 +1463,7 @@
     const look = BY_ID[id];
     if (!look) return;
     const isUserLook = APP.userLooks.some(item => item.id === id);
-    const fallback = LOOKS.find(item => item.id !== id)?.id || CAT.LOOKS.find(item => item.id !== id)?.id;
+    const fallback = LOOKS.find(item => item.id !== id)?.id;
     if (!fallback) return toast('Keep at least one look in the library.', 'var(--warn)');
     const action = isUserLook ? 'permanently delete “' + look.name + '”' : 'remove “' + look.name + '” from this app’s library';
     if (!confirm('Are you sure you want to ' + action + '? Any schedule or playlist entries using it will switch to another available look. The lights currently running on WLED will not be changed.')) return;
