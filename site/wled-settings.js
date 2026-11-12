@@ -9,6 +9,7 @@
   ];
   const DEFAULT_NAMES = ['Front gable', 'Main eave', 'Garage edge', 'Lower eave', 'Porch line', 'Side eave'];
   const clone = x => JSON.parse(JSON.stringify(x));
+  const localTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   const read = () => {
     let value;
     if (window.TL_SERVER_STATE?.has_settings) value = Object.assign({ mode: 'demo', host: '', outputs: [] }, window.TL_SERVER_STATE.settings || {});
@@ -254,7 +255,7 @@
     if (mode.value === 'demo') {
       try {
         const saved = read();
-        const next = { ...saved, mode: 'demo', host: '', channelCount: Number(channelCount.value), outputs, lat: null, lon: null };
+        const next = { ...saved, mode: 'demo', host: '', channelCount: Number(channelCount.value), outputs, lat: null, lon: null, timezone: localTimezone() };
         await saveSettings(next);
         setStatus(`Demo setup saved · ${outputs.length} output${outputs.length === 1 ? '' : 's'} configured within the ${next.channelCount}-channel capacity. House photos and traces are saved with this setup.`);
         setTimeout(() => { history.replaceState(null, '', location.pathname + location.search); location.reload(); }, 500);
@@ -279,7 +280,7 @@
         cfg.if.ntp.lt = latitude; cfg.if.ntp.ln = longitude;
       }
       const saved = read();
-      const next = { ...saved, mode: 'wled', host, channelCount: selectedChannels, outputs, lat: latitude, lon: longitude, photo: saved.photo || '', photoSize: saved.photoSize || [2000, 1500], houseViews: saved.houseViews || {} };
+      const next = { ...saved, mode: 'wled', host, channelCount: selectedChannels, outputs, lat: latitude, lon: longitude, timezone: localTimezone(), photo: saved.photo || '', photoSize: saved.photoSize || [2000, 1500], houseViews: saved.houseViews || {} };
       if (changed) {
         setStatus('Applying channel counts and color order to WLED…');
         const res = await fetch(`http://${host}/json/cfg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
@@ -295,7 +296,7 @@
   });
   document.getElementById('demoReset').addEventListener('click', async () => {
     try { localStorage.removeItem('tlstudio-demo-v1'); } catch { }
-    const next = { mode: 'demo', host: '', channelCount: 4, outputs: [], photo: '', photoSize: [2000, 1500] };
+    const next = { mode: 'demo', host: '', channelCount: 4, outputs: [], photo: '', photoSize: [2000, 1500], timezone: localTimezone() };
     if (window.TL_SERVER_STATE) {
       const saved = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
       if (!saved.ok) return setStatus('Could not save demo mode to the server.', true);
