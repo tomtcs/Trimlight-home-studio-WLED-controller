@@ -1271,7 +1271,7 @@
     if (weekly && BY_ID[weekly]) return { look: weekly, why: WEEKDAYS[d.getDay()] + ' look', src: 'weekly' };
     return { look: SC.eveLook === 'current' ? (houseLookId() || APP.lastPush?.id) : SC.eveLook, why: 'Usual look', src: 'default' };
   }
-  let vTonight = null;
+  let vTonight = null, schedulerStatusTimer = null;
   function refreshNights() {
     const today = new Date(); today.setHours(12, 0, 0, 0);
     const cards = [];
@@ -1311,7 +1311,10 @@
       const response = await fetch('/api/scheduler/status', { cache: 'no-store' });
       if (!response.ok) throw new Error('The scheduler status endpoint is unavailable. Rebuild the API container from the latest repository version.');
       const status = await response.json();
-      if (!status.enabled) { el.textContent = 'Scheduler is not enabled. Confirm that Wiring & setup is saved in Real WLED mode.'; el.classList.add('error'); return; }
+      if (!status.enabled) {
+        el.textContent = status.settingsMode !== 'wled' ? 'The API container has ' + (status.settingsMode === 'demo' ? 'Demo' : 'no') + ' controller settings while this browser is in WLED mode. Re-save Real WLED mode in Wiring & setup.' : (status.message || 'Save a WLED controller address in Wiring & setup.');
+        el.classList.add('error'); return;
+      }
       if (status.state === 'error') { el.textContent = 'Scheduler error: ' + (status.message || 'The API container could not reach WLED.'); el.classList.add('error'); return; }
       const running = status.state === 'starting' ? 'Starting' : status.state === 'active' ? 'Running date-range program' : 'Ready';
       el.textContent = 'Calendar scheduler ' + running + (status.message ? ' · ' + status.message : '') + (SC.programs.some(p => p.on !== false) ? '' : ' · No date-range programs yet; add one below and save the schedule.');
@@ -1327,6 +1330,11 @@
     }
     refreshNights();
     refreshSchedulerStatus();
+    if (schedulerStatusTimer) clearInterval(schedulerStatusTimer);
+    schedulerStatusTimer = setInterval(() => {
+      if (state.route !== 'schedule') { clearInterval(schedulerStatusTimer); schedulerStatusTimer = null; return; }
+      refreshSchedulerStatus();
+    }, 5000);
     try {
       const [i, c, scheduler] = await Promise.all([wget('/json/info'), wget('/json/cfg'), fetch('/api/scheduler/status').then(r => r.json()).catch(() => null)]), on = (c.timers?.ins || []).filter(t => t.en && t.macro).length;
       const service = window.TL_REAL_WLED && scheduler?.enabled ? ' · Calendar service ' + (scheduler.state === 'error' ? 'error: ' + scheduler.message : (scheduler.message || scheduler.state)) : '';
