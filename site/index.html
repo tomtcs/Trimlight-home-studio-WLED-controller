@@ -534,6 +534,8 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
         <div class="quick" id="progQuick"></div>
       </section>
     </div>
+    <h2 class="schh">Looks by weekday</h2>
+    <section class="schcard weekly-card"><p class="sh">Choose a different look for a recurring day. Leave a day set to “Usual look” to use the regular nightly selection above.</p><div id="weeklyLooks" class="weekly-looks"></div></section>
     <h2 class="schh">Next 3 weeks</h2>
     <div class="nights" id="nights"></div>
   </div>
@@ -615,8 +617,10 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .nights{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:8px}
 .nt{background:#1b231e;border:1px solid rgba(45,56,49,.35);border-radius:12px;padding:9px;display:flex;flex-direction:column;gap:4px;cursor:pointer;min-width:0}
 .nt:hover{border-color:#62d682}.nt.today{border-color:#4dffa6}.nt small{color:#98a79d;font-size:11.5px}.nt b{font:600 13.5px "Space Grotesk",Inter,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.nt .sw{display:flex;gap:3px}.nt .sw i{width:12px;height:12px;border-radius:50%}.nt em{font-style:normal;font-size:11px;color:#b9f4c9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.nt em.default{color:#6f8175}
+ .nt .sw{display:flex;gap:3px}.nt .sw i{width:12px;height:12px;border-radius:50%}.nt em{font-style:normal;font-size:11px;color:#b9f4c9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.nt em.default{color:#6f8175}
+.weekly-looks{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}.weekly-day{display:flex;flex-direction:column;gap:5px;color:#98a79d;font-size:12px}.weekly-day select{width:100%}.weekly-day.active select{border-color:#62d682;box-shadow:0 0 0 2px rgba(98,214,130,.12)}
 @media (max-width:1100px){.schgrid,.schgrid.two,.tonight{grid-template-columns:1fr}.nights{grid-template-columns:repeat(4,1fr)}}
+@media (max-width:800px){.weekly-looks{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 
 <style>
