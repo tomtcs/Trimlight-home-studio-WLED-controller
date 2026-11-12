@@ -187,7 +187,7 @@ def scheduler_loop():
                         scheduler_status(state="ready", message="No saved base look is available for this date; the existing WLED preset was left in place.", updated=datetime.now().astimezone().isoformat(timespec="seconds"), program=selection.get("program"), date=selection["date"])
         except Exception as exc:
             scheduler_status(enabled=True, state="error", message=str(exc)[:300])
-        time.sleep(30)
+        time.sleep(5)
 
 
 def validate_settings(settings):
@@ -328,7 +328,15 @@ class Handler(BaseHTTPRequestHandler):
             self.send_bootstrap()
             return
         if path == "/api/scheduler/status":
-            self.send_json(scheduler_status())
+            with database() as conn:
+                settings = read_state(conn, "settings") or DEFAULT_SETTINGS
+            if settings.get("mode") != "wled" or not settings.get("host"):
+                status = scheduler_status(enabled=False, state="disabled", settingsMode=settings.get("mode", "demo"), controllerConfigured=bool(settings.get("host")), message="Save a WLED controller address in Wiring & setup.")
+            else:
+                status = scheduler_status(enabled=True, settingsMode="wled", controllerConfigured=True)
+                if status.get("state") == "disabled":
+                    status = scheduler_status(state="starting", message="Waiting for the scheduler to check the saved WLED controller.")
+            self.send_json(status)
             return
         if path in ("/api/app", "/api/settings"):
             key = "app" if path == "/api/app" else "settings"
