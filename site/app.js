@@ -199,6 +199,13 @@
     if (palKey) body._palKey = palKey;   // remembered so the schedule's palettes are never evicted (WLED ignores the field)
     return body;
   }
+  function canPush(P) {
+    if (!WL.info) return false;
+    if (!isStack(P)) return true;
+    const layers = P.stack.layers || [];
+    const needsStudio = layers.length > 1 || layers.some(L => L.src?.kind === 'shape' || L.blend !== 'cover' || (L.mods || []).length > 0 || (L.zone?.feather || 0) > 0 || (L.motion?.slow || 1) !== 1);
+    return !needsStudio || (!!WL.info.tls && (WL.effects || []).includes('Studio Field'));
+  }
   const sameP = (a, b) => !!a && !!b && JSON.stringify(norm(a)) === JSON.stringify(norm(b));
   const norm = P => ({ fx: P.fx, sx: P.sx, ix: P.ix, c1: P.c1, c2: P.c2, c3: P.c3, o1: !!P.o1, o2: !!P.o2, o3: !!P.o3, pal: P.pal, col: (P.col || []).map(c => c.slice(0, 3).map(Math.round)), spc: P.spc || 0, rev: !!P.rev, mi: !!P.mi, slow: P.slow || 1, bri: Math.round(P.bri), mycol: !!P.mycol, colors: P.colors || null, blend: !!P.blend, rep: P.rep || 1, cmode: P.cmode || null, seq: P.seq || null, parts: P.parts ? P.parts.map(pt => [pt.start, pt.stop, pt.look, pt.dir || 'n', pt.speed || 1]) : null });
   // does the roof still run what we last pushed? (someone may have changed it from the WLED app)
@@ -239,6 +246,7 @@
     return fetch(`http://${WL.host}/json/cfg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) });
   }
   async function pushToHouse(P, id, base) {   // P = exactly what the roof gets (gallery adjustments applied); base = the look's own settings
+    if (!canPush(P)) throw new Error(WL.info ? 'This look uses Studio layers or effects that need Studio firmware extensions. Use one WLED effect layer with standard settings, or install the Studio extension firmware.' : 'The controller is offline.');
     const look = BY_ID[id];
     const body = wledBody(P); await flushPalettes();
     await wpost(body);
@@ -558,7 +566,7 @@
       e.stopPropagation(); if (look.cats.includes('mine') || look.custom) return toast(look.name + ' is one of saved looks.', 'var(--accent)');
       APP.starred[id] = !APP.starred[id]; save(['starred']); act.classList.toggle('on', !!APP.starred[id]); act.textContent = APP.starred[id] ? '★' : '☆'; renderNav(); return;
     }
-    if (act?.dataset.act === 'push') { e.stopPropagation(); pushToHouse(applyMaster(look.P), id, look.P).then(() => toast('Fading ' + look.name + ' onto the house…')); return; }
+    if (act?.dataset.act === 'push') { e.stopPropagation(); pushToHouse(applyMaster(look.P), id, look.P).then(() => toast('Fading ' + look.name + ' onto the house…')).catch(err => toast('Push failed: ' + err.message, 'var(--warn)')); return; }
     openEdit(id, card.querySelector('canvas'));
   });
   $('groups').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.classList.contains('card')) openEdit(e.target.dataset.id, e.target.querySelector('canvas')); });
@@ -1758,7 +1766,7 @@
     lookSrc: l => effective(l.P),
     shapeFx: name => { const i = (WL.effects || []).indexOf(name); return i > 0 ? i : null; },
     customPalId: st => CPAL(slotFor(st)),
-    fwLayers: () => !!(WL.info && !!WL.info.tls) && (WL.effects || []).includes('Studio Field'), fwVer: () => WL.info?.ver || '', fps: () => WL.info?.leds?.fps,
+    fwLayers: () => !!(WL.info && !!WL.info.tls) && (WL.effects || []).includes('Studio Field'), canPush, fwVer: () => WL.info?.ver || '', fps: () => WL.info?.leds?.fps,
     toast, goLibrary, makeView: cv => makeView(cv, CROP_STAGE, 1, 2), drawHouse,
     saveLook({ id, name, desc, P, cats }) {
       const u = id && APP.userLooks.find(x => x.id === id);
