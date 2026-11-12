@@ -218,6 +218,7 @@
   }
   function canPush(P) {
     if (!WL.info) return false;
+    if (isSec(P)) return P.parts.every(pt => { const q = partP(pt); return !isStack(q) || canPush(q); });
     if (!isStack(P)) return true;
     const layers = P.stack.layers || [];
     const needsStudio = layers.length > 1 || layers.some(L => L.src?.kind === 'shape' || L.blend !== 'cover' || (L.mods || []).length > 0 || (L.zone?.feather || 0) > 0 || (L.motion?.slow || 1) !== 1);
