@@ -1302,6 +1302,21 @@
   }
   $('nights').addEventListener('click', e => { const c = e.target.closest('[data-weekday-card]'); if (c) editWeekday(+c.dataset.weekdayCard); });
   $('nights').addEventListener('keydown', e => { const c = e.target.closest('[data-weekday-card]'); if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); editWeekday(+c.dataset.weekdayCard); } });
+  async function refreshSchedulerStatus() {
+    const el = $('schedulerStatus'); if (!el) return;
+    el.classList.remove('error');
+    if (!window.TL_REAL_WLED) { el.textContent = 'Demo mode: calendar programs are previewed here but are not sent to a controller.'; return; }
+    el.textContent = 'Checking the Docker API scheduler…';
+    try {
+      const response = await fetch('/api/scheduler/status', { cache: 'no-store' });
+      if (!response.ok) throw new Error('The scheduler status endpoint is unavailable. Rebuild the API container from the latest repository version.');
+      const status = await response.json();
+      if (!status.enabled) { el.textContent = 'Scheduler is not enabled. Confirm that Wiring & setup is saved in Real WLED mode.'; el.classList.add('error'); return; }
+      if (status.state === 'error') { el.textContent = 'Scheduler error: ' + (status.message || 'The API container could not reach WLED.'); el.classList.add('error'); return; }
+      const running = status.state === 'starting' ? 'Starting' : status.state === 'active' ? 'Running date-range program' : 'Ready';
+      el.textContent = 'Calendar scheduler ' + running + (status.message ? ' · ' + status.message : '') + (SC.programs.some(p => p.on !== false) ? '' : ' · No date-range programs yet; add one below and save the schedule.');
+    } catch (error) { el.textContent = error.message || 'Could not read calendar scheduler status.'; el.classList.add('error'); }
+  }
   async function openSchedule() {
     showRoute('schedule'); history.replaceState(null, '', location.href.split('#')[0] + '#schedule');
     if (!vTonight) vTonight = makeView($('tonightCv'), CROP_CARD, 1.4, 2);
@@ -1311,6 +1326,7 @@
       fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) }).catch(() => {});
     }
     refreshNights();
+    refreshSchedulerStatus();
     try {
       const [i, c, scheduler] = await Promise.all([wget('/json/info'), wget('/json/cfg'), fetch('/api/scheduler/status').then(r => r.json()).catch(() => null)]), on = (c.timers?.ins || []).filter(t => t.en && t.macro).length;
       const service = window.TL_REAL_WLED && scheduler?.enabled ? ' · Calendar service ' + (scheduler.state === 'error' ? 'error: ' + scheduler.message : (scheduler.message || scheduler.state)) : '';
