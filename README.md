@@ -24,7 +24,7 @@ Never expose WLED's unauthenticated local API to the public internet. This app d
 - The configurable house mapper stores multiple roof edges and ridges per photo and lets users mark individual links as wire-only. These elevation traces are mapping metadata; WLED channel capacity and reusable pattern bulb ranges are configured separately.
 - The Controller page exposes output counts and a named roof-section manager. In the Look Builder’s **Where** tab, select one or more saved ranges for a color layer; add another layer to paint a different selection another color. Saved ranges can also partition section looks.
 - Channel counts and color order can be applied to existing WLED output entries. The app does not configure GPIO pin assignments, LED type, power limits, Wi-Fi, or other hardware settings.
-- Basic nightly WLED timers and a scheduled look are written to WLED. Date-range calendar programs, AI generation, and custom Studio firmware features still need their respective services or controller extensions.
+- Basic nightly WLED timers and a scheduled look are written to WLED. Date-range calendar programs, AI generation, and advanced layered effects require their respective services or controller capabilities.
 - Demo mode remains available and never sends commands to a physical controller.
 
 ## Source and licensing
