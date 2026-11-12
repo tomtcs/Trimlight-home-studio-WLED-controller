@@ -146,13 +146,21 @@ def scheduled_selection(app, now, timezone_fallback="UTC"):
     return {"date": date_key, "dow": dow, "slot": slot, "body": body, "name": name, "program": program.get("name") if program else None, "timezone": zone_name}
 
 
-def apply_scheduled_preset(host, selection):
+def make_schedule_fingerprint(host, app, selection):
+    return json.dumps([host, selection, app.get("schedule", {}).get("programs", [])], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def apply_scheduled_preset(host, selection, fallback_body=None, save_current=False):
     body = selection.get("body")
-    if not isinstance(body, dict):
-        # A "current look" schedule has no serialized base body; keep the controller's stored preset.
+    if not isinstance(body, dict) and isinstance(fallback_body, dict):
+        body = fallback_body
+    if not isinstance(body, dict) and not save_current:
+        # A "current look" schedule has no serialized base body; leave the controller preset alone.
         return False
     base = wled_base(host)
     current = wled_json(base, "/json/state")
+    if not isinstance(body, dict):
+        body = {"on": current.get("on", False), "bri": current.get("bri", 0), "seg": current.get("seg", [])}
     preset = dict(body)
     preset.pop("_palKey", None)
     preset.update({"psave": selection["slot"], "n": "Studio · " + str(selection["name"])[:48], "ib": True, "sb": True, "o": True})
@@ -176,14 +184,14 @@ def scheduler_loop():
                 scheduler_status(enabled=False, state="disabled", message="Enable a WLED controller to run calendar programs.", program=None, date=None)
             else:
                 selection = scheduled_selection(app, datetime.now().astimezone(), settings.get("timezone", "UTC"))
-                schedule_fingerprint = json.dumps([settings.get("host"), selection, app.get("schedule", {}).get("programs", [])], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+                fingerprint = make_schedule_fingerprint(settings.get("host"), app, selection)
                 scheduler_status(enabled=True)
-                if schedule_fingerprint != SCHEDULE_LAST_KEY:
+                if fingerprint != SCHEDULE_LAST_KEY:
                     if apply_scheduled_preset(settings["host"], selection):
-                        SCHEDULE_LAST_KEY = schedule_fingerprint
+                        SCHEDULE_LAST_KEY = fingerprint
                         scheduler_status(state="active" if selection.get("program") else "ready", message="Applied " + str(selection["name"]) + " to WLED preset " + str(selection["slot"]) + ".", updated=datetime.now().astimezone().isoformat(timespec="seconds"), program=selection.get("program"), date=selection["date"])
                     else:
-                        SCHEDULE_LAST_KEY = schedule_fingerprint
+                        SCHEDULE_LAST_KEY = fingerprint
                         scheduler_status(state="ready", message="No saved base look is available for this date; the existing WLED preset was left in place.", updated=datetime.now().astimezone().isoformat(timespec="seconds"), program=selection.get("program"), date=selection["date"])
         except Exception as exc:
             scheduler_status(enabled=True, state="error", message=str(exc)[:300])
@@ -348,11 +356,30 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlsplit(self.path).path
-        if path not in ("/api/app", "/api/settings", "/api/restore"):
+        if path not in ("/api/app", "/api/settings", "/api/restore", "/api/schedule/apply"):
             self.send_json({"ok": False, "error": "Not found"}, 404)
             return
         try:
             incoming = self.body()
+            if path == "/api/schedule/apply":
+                global SCHEDULE_LAST_KEY
+                if not isinstance(incoming, dict):
+                    raise ValueError("Schedule preset request must be a JSON object.")
+                with database() as conn:
+                    settings = read_state(conn, "settings") or DEFAULT_SETTINGS
+                    app = read_state(conn, "app") or {}
+                if settings.get("mode") != "wled" or not settings.get("host"):
+                    raise ValueError("Save a WLED controller address in Wiring & setup before applying the schedule.")
+                selection = scheduled_selection(app, datetime.now().astimezone(), settings.get("timezone", "UTC"))
+                fallback = incoming.get("body") if isinstance(incoming.get("body"), dict) else None
+                if isinstance(incoming.get("name"), str) and not selection.get("program"):
+                    selection["name"] = incoming["name"][:48]
+                apply_scheduled_preset(settings["host"], selection, fallback_body=fallback, save_current=True)
+                SCHEDULE_LAST_KEY = make_schedule_fingerprint(settings["host"], app, selection)
+                message = "Applied " + str(selection["name"]) + " to WLED preset " + str(selection["slot"]) + "."
+                scheduler_status(enabled=True, settingsMode="wled", controllerConfigured=True, state="active" if selection.get("program") else "ready", message=message, updated=datetime.now().astimezone().isoformat(timespec="seconds"), program=selection.get("program"), date=selection["date"])
+                self.send_json({"ok": True, "changed": True, "tonight": "preset " + str(selection["slot"]) + " updated", "via": "wled"})
+                return
             if path == "/api/restore":
                 if not isinstance(incoming, dict) or incoming.get("format") != "trimlight-home-studio-wled-backup" or incoming.get("version") != 1:
                     raise ValueError("This is not a supported Trimlight Home Studio WLED backup.")
