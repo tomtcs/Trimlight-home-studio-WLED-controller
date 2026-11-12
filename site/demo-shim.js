@@ -143,6 +143,7 @@
       if (u === '/api/layout') return json(LAYOUT);
       if (u.startsWith('/api/schedule/apply')) {
         if (!REAL) return json({ ok: true, changed: true, tonight: 'saved (demo)', via: 'demo' });
+        if (SERVER) return realFetch(url, opt);
         try {
           const request = parsed(), host = PREFS.host, slot = Number.isInteger(request.slot) && request.slot >= 240 && request.slot <= 250 ? request.slot : 240;
           {
