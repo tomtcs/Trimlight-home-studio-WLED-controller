@@ -110,6 +110,7 @@ aside > *{flex-shrink:0}
 .del-look{position:absolute;right:48px;top:10px;z-index:2;height:30px;padding:0 9px;border-radius:9px;color:#ffc0b8;background:rgba(33,12,12,.82);border:1px solid rgba(255,120,100,.3);font:600 11px Inter,sans-serif;cursor:pointer;opacity:0;transition:opacity .15s,background .15s}
 .card:hover .del-look,.card:focus-within .del-look{opacity:1}
 .del-look:hover{background:rgba(120,32,24,.9)}
+@media (hover:none){.del-look{opacity:1}}
 .qpush{position:absolute;right:10px;bottom:10px;z-index:2;height:32px;padding:0 13px;border-radius:10px;font-weight:700;font-size:12px;color:#092211;background:var(--grad);
   box-shadow:0 8px 22px -8px rgba(53,179,84,.8);opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s var(--ease);display:flex;align-items:center;gap:6px}
 .card:hover .qpush,.card:focus-within .qpush{opacity:1;transform:none}
