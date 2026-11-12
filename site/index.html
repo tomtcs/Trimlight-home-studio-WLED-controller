@@ -102,11 +102,14 @@ aside > *{flex-shrink:0}
 .badge{position:absolute;left:10px;top:10px;z-index:2;display:none;align-items:center;gap:7px;height:24px;padding:0 10px;border-radius:999px;font-size:11px;font-weight:600;
   background:rgba(4,20,12,.78);color:var(--live);border:1px solid rgba(77,255,166,.35);backdrop-filter:blur(8px)}
 .card.live .badge{display:inline-flex}
-.badge.mine{left:auto;right:48px;display:inline-flex;color:var(--accent);background:rgba(28,14,2,.72);border-color:rgba(98,214,130,.3)}
+.badge.mine{left:auto;right:88px;display:inline-flex;color:var(--accent);background:rgba(28,14,2,.72);border-color:rgba(98,214,130,.3)}
 .star{position:absolute;right:10px;top:10px;z-index:2;width:30px;height:30px;border-radius:10px;display:grid;place-items:center;font-size:15px;color:rgba(238,242,255,.65);
   background:rgba(5,8,16,.55);border:1px solid rgba(255,255,255,.08);backdrop-filter:blur(8px);transition:color .15s,background .15s,transform .15s}
 .star:hover{color:var(--accent);transform:scale(1.06)}
 .star.on{color:var(--accent);border-color:rgba(98,214,130,.4)}
+.del-look{position:absolute;right:48px;top:10px;z-index:2;height:30px;padding:0 9px;border-radius:9px;color:#ffc0b8;background:rgba(33,12,12,.82);border:1px solid rgba(255,120,100,.3);font:600 11px Inter,sans-serif;cursor:pointer;opacity:0;transition:opacity .15s,background .15s}
+.card:hover .del-look,.card:focus-within .del-look{opacity:1}
+.del-look:hover{background:rgba(120,32,24,.9)}
 .qpush{position:absolute;right:10px;bottom:10px;z-index:2;height:32px;padding:0 13px;border-radius:10px;font-weight:700;font-size:12px;color:#092211;background:var(--grad);
   box-shadow:0 8px 22px -8px rgba(53,179,84,.8);opacity:0;transform:translateY(6px);transition:opacity .2s,transform .2s var(--ease);display:flex;align-items:center;gap:6px}
 .card:hover .qpush,.card:focus-within .qpush{opacity:1;transform:none}
