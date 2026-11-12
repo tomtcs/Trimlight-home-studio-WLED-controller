@@ -1,6 +1,6 @@
 /* Trimlight Studio · Look Builder (approved mockup: /mockups/v5-builder.html).
    A look = a stack of layers. Each layer draws a controller effect (tlfx.js) or a Studio shape, on chosen stretches of roof,
-   blended onto the layers below. Each layer maps to WLED segments and may use optional Studio firmware extensions.
+   blended onto the layers below. Each layer maps to WLED segments and may use optional controller capabilities.
    window.TLBuilder: init(host) · render(view, P, nowMs) → Uint8Array (screen space) · segments(P) · open(id) · isStack(P) */
 (function (g) {
   'use strict';
@@ -264,7 +264,7 @@
         bm: BLENDS[L.blend].code, fe: L.zone.feather | 0, tlc: qStops(L.stops).map(([p, c]) => [c[0], c[1], c[2], Math.round(p * 255)]),
         mod: L.mods.map(m => [MOD_T[m.target] ?? 0, Math.max(0, MOD_SHAPES.findIndex(s => s[0] === m.shape)), Math.round(m.depth), Math.round(m.phase || 0), Math.round(m.per * 1000)]) };
       if (L.src.kind === 'shape') {
-        let fx = H.shapeFx(SHAPES[L.src.type].fw); if (fx == null) { if (!dry) throw new Error('The controller doesn’t have the Studio shapes yet (needs Studio firmware extensions)'); fx = SHAPES[L.src.type].fw + ' (not on the controller yet)'; }
+        let fx = H.shapeFx(SHAPES[L.src.type].fw); if (fx == null) { if (!dry) throw new Error('The controller does not advertise the ' + SHAPES[L.src.type].name + ' effect'); fx = SHAPES[L.src.type].fw + ' (not on the controller yet)'; }
         const q = SHAPES[L.src.type].enc(L.src.p); Object.assign(base, { fx, sx: q.sx, ix: q.ix, c1: q.c1, c2: q.c2, c3: q.c3, o1: q.o1, o2: q.o2, o3: false, pal: 0, col: [[255, 160, 0], [0, 0, 0], [0, 0, 0]] });
       } else {
         const s = L.src; Object.assign(base, { fx: s.fx, sx: s.sx, ix: s.ix, c1: s.c1, c2: s.c2, c3: Math.min(31, s.c3), o1: !!s.o1, o2: !!s.o2, o3: !!s.o3, pal: L.customPal ? (dry ? 'custom slot' : H.customPalId(qStops(L.stops).map(([p, c]) => [Math.round(p * 255), c]))) : s.pal, col: s.col.map(c => c.slice(0, 3)) });
@@ -514,7 +514,7 @@
         '<div class="note">Off bulbs in this layer are see-through, so the layers below show in the gaps.</div>';
     }
     if (tab === 'blend') return '<div class="note">How this layer mixes with the layers <b>under</b> it. The bottom layer blends onto darkness.</div><div class="blends">' + Object.entries(BLENDS).map(([k, b]) => '<button class="blend' + (L.blend === k ? ' on' : '') + '" data-bl="' + k + '"><b>' + b.name + '</b><small>' + b.d + '</small><canvas data-bdemo="' + k + '"></canvas></button>').join('') + '</div><div class="note" style="margin-top:12px">Demo strips: an orange gradient underneath, this mode applied with a blue wave on top.</div>';
-    if (tab === 'motion') return motionGallery(L) + '<div class="sub" style="margin-top:20px">Fine-tune</div><div class="ctl"><div class="r"><span>Slow motion</span><small>Studio firmware</small></div>' + sgs('motion.slow', L.motion.slow, [[1, '1×'], [2, '½×'], [4, '¼×'], [8, '⅛×'], [16, '1/16×']]) + '</div><div class="note">Slows this layer only, without the stutter you get from just turning the speed down.</div>' +
+    if (tab === 'motion') return motionGallery(L) + '<div class="sub" style="margin-top:20px">Fine-tune</div><div class="ctl"><div class="r"><span>Slow motion</span><small>controller capability</small></div>' + sgs('motion.slow', L.motion.slow, [[1, '1×'], [2, '½×'], [4, '¼×'], [8, '⅛×'], [16, '1/16×']]) + '</div><div class="note">Slows this layer only, without the stutter you get from just turning the speed down.</div>' +
       '<label class="chk"><input type="checkbox" data-c="motion.rev"' + (L.motion.rev ? ' checked' : '') + '> Run the other way</label><label class="chk"><input type="checkbox" data-c="motion.mi"' + (L.motion.mi ? ' checked' : '') + '> Mirror from the middle of each stretch</label>';
     if (tab === 'mod') return modsTab(L);
     return '';
@@ -716,7 +716,7 @@
     $('pkfilt').innerHTML = F.map(f => '<button data-f="' + f[0] + '" class="' + (pkFilt === f[0] ? 'on' : '') + '">' + esc(f[1]) + '</button>').join(''); $('pkfilt').style.display = F.length ? '' : 'none';
     const selL = layerById(sel), pcols = selL ? layerCols(selL) : [], pblend = selL && selL.sw ? selL.sw.blend : true;
     if (pkTab === 'motions') items = g.TLMotions.LIST.filter(m => pkFilt === 'all' || m.cat === pkFilt).map(m => ({ name: m.name, desc: m.desc, tags: [[m.kind === 'shape' ? 'n' : '', m.kind === 'shape' ? 'Studio' : 'controller fx']], prev: { kind: 'motion', id: m.id, P: { stack: { layers: [g.TLMotions.layer(m.id, pcols.length ? pcols : [[255, 120, 20], [255, 60, 0]], pblend, .4, .5)], knobs: [] } } } }));
-    else if (pkTab === 'studio') items = Object.entries(SHAPES).map(([k, s]) => ({ name: s.icon + ' ' + s.name, desc: s.desc, tags: [['n', H.shapeFx(s.fw) != null ? 'runs on the controller' : 'needs Studio firmware extensions']], prev: { kind: 'shape', type: k } }));
+    else if (pkTab === 'studio') items = Object.entries(SHAPES).map(([k, s]) => ({ name: s.icon + ' ' + s.name, desc: s.desc, tags: [['n', H.shapeFx(s.fw) != null ? 'runs on the controller' : 'not advertised by controller']], prev: { kind: 'shape', type: k } }));
     else if (pkTab === 'fx') {
       items = FXL.supported.map(id => ({ id, n: fxName(id), m: fxMeta(id) })).filter(o => !(pkFilt === 'lib' && !lookFx[o.id]) && !(pkFilt === 'mic' && !o.m.audio) && !(pkFilt === 'flash' && !STROBE.has(o.id)) && !(pkFilt === 'calm' && (STROBE.has(o.id) || o.m.audio)))
         .sort((a, b) => (lookFx[b.id] || 0) - (lookFx[a.id] || 0) || a.n.localeCompare(b.n))
@@ -885,9 +885,9 @@
   }
   function syncFw() {
     const ok = H.canPush(lookP()), studio = H.fwLayers(), el = $('fw');
-    el.textContent = !H.fwVer() ? 'Controller offline' : studio ? 'Studio firmware ready · ' + H.fwVer() : ok ? 'WLED-compatible look · ' + H.fwVer() : 'This look needs Studio firmware extensions';
+    el.textContent = !H.fwVer() ? 'Controller offline' : studio ? 'Layer effects available · ' + H.fwVer() : ok ? 'WLED-compatible look · ' + H.fwVer() : 'Look uses unsupported controller features';
     el.className = 'chip ' + (ok ? 'ok' : 'fw');
-    $('push').disabled = !ok; $('push').title = ok ? '' : 'This look uses Studio layers or features unavailable in stock WLED';
+    $('push').disabled = !ok; $('push').title = ok ? '' : 'This look uses effects or layer features the controller does not advertise';
   }
   function renderAll() { renderLayers(); renderLanes(); renderInspector(); renderJSON(); $('crumb').textContent = LOOK.id ? 'Builder · your look' : 'Builder · new look'; }
 
