@@ -530,6 +530,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
     <div class="schgrid two">
       <section class="schcard"><h3>📅 Calendar</h3>
         <p class="sh">A look for a date range. When programs overlap, the one that starts later wins. In WLED mode, the Docker API service selects that look at the start of each date in this browser’s time zone and updates the scheduled preset; keep the API container running and set WLED to the same time zone.</p>
+        <p class="scheduler-status" id="schedulerStatus" role="status" aria-live="polite">Checking calendar scheduler…</p>
         <div id="progs"></div>
         <div class="quick" id="progQuick"></div>
       </section>
@@ -610,6 +611,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .sl output{color:#f4f7f5;font:600 13px "Space Grotesk",Inter,sans-serif;min-width:38px;text-align:right}.sl input[type=range]{accent-color:#62d682}
 .schpage input[type=time],.schpage input[type=number],.schpage input[type=date],.schpage input[type=text],.schpage select{background:#141a17;border:1px solid rgba(71,94,77,.4);border-radius:9px;color:#f4f7f5;font:13px Inter,sans-serif;padding:5px 7px;color-scheme:dark;min-width:0}
 .sn{width:62px}.sh{font-size:12px;color:#6f8175;margin:0}
+.scheduler-status{font-size:13px;color:var(--text);padding:10px 12px;margin:10px 0!important;border:1px solid var(--line);border-radius:10px;background:var(--panel-2)}.scheduler-status.error{color:#ff8f8f;border-color:#7b4141}
 .prog{display:grid;grid-template-columns:18px minmax(0,1.1fr) 128px 128px minmax(0,1.2fr) 26px;gap:6px;align-items:center;margin-bottom:6px}
 .prog input[type=checkbox]{accent-color:#62d682}.prog .x{border:0;background:none;color:#6f8175;font-size:18px;cursor:pointer}.prog .x:hover{color:#ff5d6c}
 .quick{display:flex;flex-wrap:wrap;gap:6px}.quick button{border:1px dashed rgba(98,214,130,.45);background:none;color:#b9f4c9;border-radius:999px;padding:4px 10px;font:500 12px Inter,sans-serif;cursor:pointer}
