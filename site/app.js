@@ -43,7 +43,7 @@
   const N = LEDS.length;
 
   /* ---------------- persistent app state (server: data/app.json) ---------------- */
-  const APP = Object.assign({ userLooks: [], edits: {}, cats: [], starred: {}, roofSections: [], master: { speed: 100, bright: 100, spacing: 0, theme: '' }, perRow: 3, previewAnimations: true, lastPush: null, history: [] }, getSync('/api/app'));
+  const APP = Object.assign({ userLooks: [], edits: {}, cats: [], starred: {}, deletedLooks: [], roofSections: [], master: { speed: 100, bright: 100, spacing: 0, theme: '' }, perRow: 3, previewAnimations: true, lastPush: null, history: [] }, getSync('/api/app'));
   APP.roofSections = Array.isArray(APP.roofSections) ? APP.roofSections : [];
   let saveT = null; const pending = {};
   function save(keys) { keys.forEach(k => pending[k] = APP[k]); clearTimeout(saveT); saveT = setTimeout(() => { const b = Object.assign({}, pending); for (const k in pending) delete pending[k]; fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).catch(() => toast('Couldn’t save', 'var(--warn)')); }, 300); }
@@ -64,8 +64,9 @@
   }
   let LOOKS = [], BY_ID = {};
   function buildLooks() {
+    const removed = new Set(APP.deletedLooks || []);
     LOOKS = APP.userLooks.map(u => Object.assign({}, CAT.LOOKS.find(c => c.id === u.base) || {}, u, { custom: true }))
-      .concat(CAT.LOOKS.map(l => Object.assign({}, l)));
+      .concat(CAT.LOOKS.filter(l => !removed.has(l.id)).map(l => Object.assign({}, l)));
     LOOKS.forEach(l => { const e = APP.edits[l.id]; if (e) { if (e.name) l.name = e.name; if (e.cats) l.cats = e.cats; } l.P = l.custom && l.P ? upgradeP(l.P) : baseP(l); });
     BY_ID = {}; LOOKS.forEach(l => BY_ID[l.id] = l);
   }
@@ -179,11 +180,21 @@
     return q;
   }
   function secBody(P) {
-    const segs = P.parts.map((pt, k) => {
-      const q = effective(partP(pt)); if (q.cpal) q.pal = CPAL(slotFor(q.cpal));
-      const top = Math.max(1, P.bri), sb = clamp(Math.round(255 * clamp(q.bri, 1, 255) / Math.max(top, ...P.parts.map(x => partP(x).bri))), 1, 255);
-      return segFor(q, k, { start: pt.start, stop: pt.stop, bri: sb, n: (pt.name || '').slice(0, 30) });
+    const top = Math.max(1, P.bri, ...P.parts.map(x => partP(x).bri || 1)), segs = [];
+    P.parts.forEach(pt => {
+      const q = partP(pt), sb = clamp(Math.round(255 * clamp(q.bri, 1, 255) / top), 1, 255);
+      if (isStack(q)) {
+        TLB.segments(q).forEach(layer => {
+          const start = Math.max(pt.start, layer.start), stop = Math.min(pt.stop, layer.stop);
+          if (stop <= start) return;
+          segs.push(Object.assign({}, layer, { id: segs.length, start, stop, bri: clamp(Math.round((layer.bri ?? 255) * sb / 255), 0, 255), n: ((pt.name || 'Section') + ' · ' + (layer.n || 'Layer')).slice(0, 30) }));
+        });
+      } else {
+        const e = effective(q); if (e.cpal) e.pal = CPAL(slotFor(e.cpal));
+        segs.push(segFor(e, segs.length, { start: pt.start, stop: pt.stop, bri: sb, n: (pt.name || '').slice(0, 30) }));
+      }
     });
+    if (segs.length > 32) throw new Error('This section look uses ' + segs.length + ' WLED segments; the controller limit is 32. Remove a layer or simplify the selected looks.');
     return segs;
   }
   // per-bulb pattern → one segment per coloured entry: offset by its position, `n` bulbs lit, the rest of the repeat skipped
@@ -284,9 +295,16 @@
       const top = Math.max(...P.parts.map(pt => partP(pt).bri), 1);
       P.parts.forEach((pt, k) => {
         const q = partP(pt), len = clamp(pt.stop, 0, N) - clamp(pt.start, 0, N); if (len <= 0) return;
-        const sv = v.parts[k] && v.parts[k].len === len ? v.parts[k] : (v.parts[k] = { len, n: len });
-        const buf = renderPart(sv, q, nowMs, len), f = q.bri / top;
-        for (let i = 0; i < len; i++) { const o = (pt.start + i) * 3; d[o] = buf[i * 3] * f; d[o + 1] = buf[i * 3 + 1] * f; d[o + 2] = buf[i * 3 + 2] * f; }
+        const f = q.bri / top;
+        if (isStack(q)) {
+          const sv = v.parts[k] && v.parts[k].stack ? v.parts[k] : (v.parts[k] = { stack: true });
+          const buf = TLB.render(sv, q, nowMs);
+          for (let i = 0; i < len; i++) { const o = (pt.start + i) * 3; d[o] = buf[o] * f; d[o + 1] = buf[o + 1] * f; d[o + 2] = buf[o + 2] * f; }
+        } else {
+          const sv = v.parts[k] && v.parts[k].len === len ? v.parts[k] : (v.parts[k] = { len, n: len });
+          const buf = renderPart(sv, q, nowMs, len);
+          for (let i = 0; i < len; i++) { const o = (pt.start + i) * 3; d[o] = buf[i * 3] * f; d[o + 1] = buf[i * 3 + 1] * f; d[o + 2] = buf[i * 3 + 2] * f; }
+        }
       });
       return d;
     }
@@ -493,7 +511,7 @@
     return '<article class="card" tabindex="0" data-id="' + l.id + '"><div class="th"><canvas></canvas>' +
       '<span class="badge"><span class="dot"></span>Active on WLED</span>' + (l.custom ? '<span class="badge mine">Your look</span>' : '') +
       '<button class="star' + (st ? ' on' : '') + '" title="Add to Saved looks" data-act="star">' + (st ? '★' : '☆') + '</button>' +
-      (l.custom ? '<button class="del-look" data-act="delete" title="Delete this look" aria-label="Delete ' + esc(l.name) + '">Delete</button>' : '') +
+      '<button class="del-look" data-act="delete" title="Remove this look from the library" aria-label="Remove ' + esc(l.name) + '">Delete</button>' +
       '<button class="qpush" data-act="push">▶ Push</button></div>' +
       '<div class="meta"><div><div class="nm">' + esc(l.name) + '<button class="rnb" data-act="rename" title="Rename">✎</button>' + (l.cats.includes('mic') ? '<span class="mic">needs mic</span>' : '') + (l.flash ? '<span class="mic" title="Fast flashing">⚡ flashes</span>' : '') + '</div><div class="mood">' + esc(l.desc || '') + '</div></div>' +
       '<div class="sw">' + cardSwatches(applyMaster(l.P)) + '</div></div></article>';
@@ -1341,7 +1359,7 @@
   const RUNS = (() => { let o = 0; return (layout.runs || []).slice().map((r, k) => ({ r, k })).sort((a, b) => (a.r.port - b.r.port) || (a.k - b.k)).map(({ r }) => { const x = { start: o, stop: o + r.leds, name: r.name, port: r.port }; o += r.leds; return x; }); })();
   const SEC_COL = ['#62d682', '#4dc3ff', '#b98cff', '#4dffa6', '#ff6b9a', '#ffd36b', '#7a8cff', '#ff8a4d'];
   const SEC_SPEEDS = [[0.25, '¼×'], [0.5, '½×'], [0.75, '¾×'], [1, '1×'], [1.5, '1½×'], [2, '2×']];
-  const secLooks = () => LOOKS.filter(l => !isSec(l.P) && !isStack(l.P) && l.P.cmode !== 'bulb');
+  const secLooks = () => LOOKS.filter(l => !isSec(l.P));
   let SD = null, vSec = null;   // the split look being edited
   const PORT_NAME = Object.fromEntries([...new Set(RUNS.map(r => r.port))].map(port => [port, 'Output ' + port]));
   const portRange = pt => { const rs = RUNS.filter(r => r.port === pt); return rs.length ? [rs[0].start, rs[rs.length - 1].stop] : null; };
@@ -1442,12 +1460,15 @@
   const plName = v => typeof v === 'string' && v.startsWith('pl:') ? (plById(v.slice(3))?.name || 'Playlist') : null;
   function deleteLook(id) {
     const look = BY_ID[id];
-    if (!look?.custom || !APP.userLooks.some(item => item.id === id)) return;
-    const fallback = CAT.LOOKS.find(item => item.id === 'autumn-twinkle')?.id || CAT.LOOKS[0]?.id;
-    if (!fallback) return toast('A built-in fallback look is unavailable.', 'var(--warn)');
-    if (!confirm('Delete “' + look.name + '” from Saved looks? Any schedule or playlist entries using it will switch to a built-in look. The lights currently running on WLED will not be changed.')) return;
+    if (!look) return;
+    const isUserLook = APP.userLooks.some(item => item.id === id);
+    const fallback = LOOKS.find(item => item.id !== id)?.id || CAT.LOOKS.find(item => item.id !== id)?.id;
+    if (!fallback) return toast('Keep at least one look in the library.', 'var(--warn)');
+    const action = isUserLook ? 'permanently delete “' + look.name + '”' : 'remove “' + look.name + '” from this app’s library';
+    if (!confirm('Are you sure you want to ' + action + '? Any schedule or playlist entries using it will switch to another available look. The lights currently running on WLED will not be changed.')) return;
 
-    APP.userLooks = APP.userLooks.filter(item => item.id !== id);
+    if (isUserLook) APP.userLooks = APP.userLooks.filter(item => item.id !== id);
+    else APP.deletedLooks = [...new Set([...(APP.deletedLooks || []), id])];
     delete APP.edits[id]; delete APP.starred[id]; delete APP.plSlots[id];
     APP.history = (APP.history || []).filter(item => item !== id);
     const wasLastPushed = APP.lastPush?.id === id;
@@ -1463,7 +1484,7 @@
       ? { look: 'current', name: 'Whatever you last pushed', body: null }
       : { look: SC.eveLook, name: nameOf(SC.eveLook), body: bodyOf(SC.eveLook) };
     SC.programs.forEach(program => { program.lookName = nameOf(program.look); program.body = bodyOf(program.look); });
-    save(['userLooks', 'edits', 'starred', 'history', 'lastPush', 'schedule', 'playlists', 'plSlots']);
+    save(['userLooks', 'deletedLooks', 'edits', 'starred', 'history', 'lastPush', 'schedule', 'playlists', 'plSlots']);
     renderNav(); renderGallery(true);
     if (state.route === 'schedule') fillSchedule();
     if (state.route === 'playlists') renderPlaylists();
