@@ -13,18 +13,42 @@
   let H = null, B = null, M = null, RUNS = [], THEMES = [], ZG = [], N = 0;
   let WZ = null, P = null, view = {}, SV = null, step = 0, cat = 'all', swSel = 0, cards = [], obs = null, mounted = false, active = false, raf = 0, last = 0, t = 0, cardT = 0, dirty = false;
 
-  const defaults = () => ({ id: null, cols: (THEMES.find(x => x[0] === 'Autumn Twinkle') || THEMES[0])[1].map(c => c.slice()), blend: true, theme: 'Autumn Twinkle', motion: 'tide', speed: .35, amount: .5, bri: 190, dir: 'fwd', runs: RUNS.map((_, i) => i), rest: 'off', extras: { twinkle: false, breathe: false, sway: false, soft: true }, twCol: 'gold', name: '', named: false, cats: ['mine'] });
+  const defaults = () => ({ id: null, cols: (THEMES.find(x => x[0] === 'Autumn Twinkle') || THEMES[0])[1].map(c => c.slice()), blend: true, theme: 'Autumn Twinkle', motion: 'tide', speed: .35, amount: .5, bri: 190, dir: 'fwd', runs: RUNS.map((_, i) => i), sections: [], rest: 'off', extras: { twinkle: false, breathe: false, sway: false, soft: true }, twCol: 'gold', name: '', named: false, cats: ['mine'] });
+
+  const savedZones = () => ZG.filter(z => z[2]);
+  const sectionRanges = () => (WZ.sections || []).map(id => savedZones().find(z => z[2].id === id)).filter(Boolean).map(z => ({ start: z[2].start, len: z[2].len }));
+  function mergeRanges(ranges) {
+    const sorted = ranges.map(r => ({ start: Math.max(0, Math.round(r.start)), len: Math.max(0, Math.round(r.len)) })).filter(r => r.len).sort((a, b) => a.start - b.start);
+    const out = [];
+    for (const r of sorted) { const last = out[out.length - 1]; if (last && r.start <= last.start + last.len) last.len = Math.max(last.start + last.len, r.start + r.len) - last.start; else out.push(r); }
+    return out;
+  }
+  function selectedRanges() {
+    if (WZ.sections?.length) return mergeRanges(sectionRanges());
+    return mergeRanges(WZ.runs.map(i => RUNS[i]).filter(Boolean).map(r => ({ start: r.start, len: r.len })));
+  }
+  function rangeBulbs(ranges) { return ranges.reduce((n, r) => n + r.len, 0); }
+  function rangeComplement(ranges) {
+    const out = []; let at = 0;
+    for (const r of mergeRanges(ranges)) { if (r.start > at) out.push({ start: at, len: r.start - at }); at = Math.max(at, r.start + r.len); }
+    if (at < N) out.push({ start: at, len: N - at });
+    return out;
+  }
+  function whereLabel() {
+    if (WZ.sections?.length) return WZ.sections.map(id => savedZones().find(z => z[2].id === id)?.[0]).filter(Boolean).join(', ');
+    return WZ.runs.length === RUNS.length ? 'Whole roof' : WZ.runs.map(i => RUNS[i]?.name).filter(Boolean).join(', ');
+  }
 
   /* ---- choices → layers (same recipe as the mockup) ---- */
   function buildStack() {
-    const layers = [], whole = WZ.runs.length === RUNS.length;
-    if (!whole && WZ.rest === 'glow') { const gl = M.layer('steady', [WZ.cols[0]], true, 0, 0); gl.name = 'Everywhere else'; gl.opacity = 22; gl.zone.runs = RUNS.map((_, i) => i).filter(i => !WZ.runs.includes(i)); layers.push(gl); }
-    const L = M.layer(WZ.motion, WZ.cols, WZ.blend, WZ.speed, WZ.amount); L.zone.runs = WZ.runs.slice();
+    const layers = [], custom = !!WZ.sections?.length, chosen = selectedRanges(), whole = rangeBulbs(chosen) >= N;
+    if (!whole && WZ.rest === 'glow') { const gl = M.layer('steady', [WZ.cols[0]], true, 0, 0); gl.name = 'Everywhere else'; gl.opacity = 22; if (custom) gl.zone.custom = rangeComplement(chosen); else gl.zone.runs = RUNS.map((_, i) => i).filter(i => !WZ.runs.includes(i)); layers.push(gl); }
+    const L = M.layer(WZ.motion, WZ.cols, WZ.blend, WZ.speed, WZ.amount); if (custom) L.zone.custom = chosen; else L.zone.runs = WZ.runs.slice();
     L.motion.rev = WZ.dir === 'rev'; L.motion.mi = WZ.dir === 'mid'; if (WZ.extras.soft && !whole) L.zone.feather = 3;
     if (WZ.extras.breathe) L.mods.push({ target: 'opacity', shape: 'sine', per: 20, depth: 40, phase: 0 });
     if (WZ.extras.sway) L.mods.push({ target: 'pos', shape: 'sine', per: 40, depth: 25, phase: 0 });
     layers.push(L);
-    if (WZ.extras.twinkle) { const tc = WZ.twCol === 'gold' ? [[255, 170, 30]] : WZ.twCol === 'same' ? WZ.cols.filter(c => !nearWhite(c)) : [[150, 140, 255]]; const tw = M.layer('softtwinkle', tc.length ? tc : [[255, 170, 30]], true, .4, .3); tw.name = 'Twinkle on top'; tw.blend = 'lighter'; /* brighter wins: twinkles never mix into the colors below */ tw.zone.runs = WZ.runs.slice(); layers.push(tw); }
+    if (WZ.extras.twinkle) { const tc = WZ.twCol === 'gold' ? [[255, 170, 30]] : WZ.twCol === 'same' ? WZ.cols.filter(c => !nearWhite(c)) : [[150, 140, 255]]; const tw = M.layer('softtwinkle', tc.length ? tc : [[255, 170, 30]], true, .4, .3); tw.name = 'Twinkle on top'; tw.blend = 'lighter'; /* brighter wins: twinkles never mix into the colors below */ if (custom) tw.zone.custom = chosen; else tw.zone.runs = WZ.runs.slice(); layers.push(tw); }
     return { stack: { layers, knobs: [] }, bri: WZ.bri, fade: 2, simple: clone(WZ) };
   }
   const nearWhite = c => { const hi = Math.max(...c), lo = Math.min(...c); return hi > 110 && lo > .6 * hi; };
@@ -50,7 +74,7 @@
   }
   function renderRecipe() {
     const m = M.byId[WZ.motion];
-    $('recipe').innerHTML = '<span><b>' + WZ.cols.length + '</b> colors</span><span><b>' + esc(m.name) + '</b></span><span>speed <b>' + Math.round(WZ.speed * 100) + '</b></span><span><b>' + (WZ.runs.length === RUNS.length ? 'Whole roof' : WZ.runs.length + ' stretches') + '</b></span>' +
+    $('recipe').innerHTML = '<span><b>' + WZ.cols.length + '</b> colors</span><span><b>' + esc(m.name) + '</b></span><span>speed <b>' + Math.round(WZ.speed * 100) + '</b></span><span><b>' + (WZ.sections?.length ? WZ.sections.length + ' roof sections' : WZ.runs.length === RUNS.length ? 'Whole roof' : WZ.runs.length + ' stretches') + '</b></span>' +
       Object.entries(WZ.extras).filter(([k, v]) => v && k !== 'soft').map(([k]) => '<span>+ ' + ({ twinkle: 'twinkle', breathe: 'breathing', sway: 'sway' })[k] + '</span>').join('') +
       '<span style="margin-left:auto;border:0;background:none">' + P.stack.layers.length + ' layer' + (P.stack.layers.length > 1 ? 's' : '') + ' on the controller' + (dirty ? ' · unsaved' : '') + '</span>';
   }
@@ -77,10 +101,12 @@
       el.innerHTML = big('speed', m.spWord, WZ.speed, 'Slow & calm', 'Fast & lively') + (m.am.length ? big('amount', m.amWord || 'Amount', WZ.amount, 'Less', 'More') : '<div class="note">' + esc(m.name) + ' has no amount setting.</div>') + big('bri', 'Brightness', WZ.bri / 255, 'Dim', 'Bright') +
         '<div class="lbl">Direction</div><div class="dirs">' + [['fwd', 'Forward', 'From the garage end'], ['rev', 'Backward', 'Toward the garage'], ['mid', 'From the middle', 'Mirrored outward']].map(d => '<button class="opt' + (WZ.dir === d[0] ? ' on' : '') + '" data-dir="' + d[0] + '"><b>' + d[1] + '</b><small>' + d[2] + '</small></button>').join('') + '</div>';
     } else if (step === 3) {
-      const on = new Set(WZ.runs);
-      el.innerHTML = '<div class="lbl">Quick picks</div><div class="pair">' + ZG.map((z, i) => '<button class="opt' + (z[1].length === on.size && z[1].every(r => on.has(r)) ? ' on' : '') + '" data-zg="' + i + '"><b>' + esc(z[0]) + '</b><small>' + z[1].reduce((a, r) => a + RUNS[r].len, 0) + ' bulbs</small></button>').join('') + '</div>' +
-        '<div class="lbl">Or pick stretches</div>' + RUNS.map((r, i) => '<label class="zone' + (on.has(i) ? ' on' : '') + '"><input type="checkbox" data-run="' + i + '"' + (on.has(i) ? ' checked' : '') + '><span>' + esc(r.name) + '</span><small>' + r.len + ' bulbs</small></label>').join('') +
-        (WZ.runs.length < RUNS.length ? '<div class="lbl">Everywhere else</div><div class="pair"><button class="opt' + (WZ.rest === 'off' ? ' on' : '') + '" data-rest="off"><b>Off</b><small>Only the chosen stretches light up</small></button><button class="opt' + (WZ.rest === 'glow' ? ' on' : '') + '" data-rest="glow"><b>Soft glow</b><small>A dim glow of color 1</small></button></div>' : '');
+      const on = new Set(WZ.runs), selected = new Set(WZ.sections || []), quick = ZG.map((z, i) => ({ z, i })).filter(x => !x.z[2]), saved = savedZones();
+      const selectedCount = rangeBulbs(selectedRanges());
+      el.innerHTML = '<div class="lbl">Quick picks</div><div class="pair">' + quick.map(({ z, i }) => '<button class="opt' + (!selected.size && z[1].length === on.size && z[1].every(r => on.has(r)) ? ' on' : '') + '" data-zg="' + i + '"><b>' + esc(z[0]) + '</b><small>' + z[1].reduce((a, r) => a + RUNS[r].len, 0) + ' bulbs</small></button>').join('') + '</div>' +
+        (saved.length ? '<div class="lbl">Your saved roof sections <span>select one or more bulb ranges</span></div><div class="pair">' + saved.map(z => '<button class="opt' + (selected.has(z[2].id) ? ' on' : '') + '" data-section="' + esc(z[2].id) + '"><b>' + esc(z[0]) + '</b><small>Bulbs ' + (z[2].start + 1) + '–' + (z[2].start + z[2].len) + ' · ' + z[2].len + ' bulbs</small></button>').join('') + '</div>' + (selected.size ? '<div class="note">Selected sections: ' + selected.size + ' · ' + selectedCount + ' bulbs</div>' : '') : '') +
+        (selected.size ? '<div class="note">Named sections use their saved bulb ranges, including ranges that begin or end partway through a WLED output.</div>' : '<div class="lbl">Or pick output stretches</div>' + RUNS.map((r, i) => '<label class="zone' + (on.has(i) ? ' on' : '') + '"><input type="checkbox" data-run="' + i + '"' + (on.has(i) ? ' checked' : '') + '><span>' + esc(r.name) + '</span><small>' + r.len + ' bulbs</small></label>').join('')) +
+        (selectedCount < N ? '<div class="lbl">Everywhere else</div><div class="pair"><button class="opt' + (WZ.rest === 'off' ? ' on' : '') + '" data-rest="off"><b>Off</b><small>Only the chosen areas light up</small></button><button class="opt' + (WZ.rest === 'glow' ? ' on' : '') + '" data-rest="glow"><b>Soft glow</b><small>A dim glow of color 1</small></button></div>' : '');
     } else if (step === 4) {
       const X = [['twinkle', 'Twinkle on top', 'Soft twinkles sprinkled over your motion.', '<div class="sub2"><div class="pair" style="grid-template-columns:repeat(3,1fr)">' + [['gold', 'Gold'], ['same', 'My colors'], ['cool', 'Cool']].map(o => '<button class="opt' + (WZ.twCol === o[0] ? ' on' : '') + '" data-twc="' + o[0] + '" style="padding:7px 9px"><b style="font-size:12.5px">' + o[1] + '</b></button>').join('') + '</div></div>'],
         ['breathe', 'Breathe slowly', 'The whole look gently brightens and dims every 20 seconds.', ''], ['sway', 'Gentle sway', 'The pattern slowly sways back and forth along the roof.', ''], ['soft', 'Soft edges', 'Fades in at the ends of each stretch instead of a hard start.', '']];
@@ -88,7 +114,7 @@
     } else {
       const m = M.byId[WZ.motion], ok = H.fwLayers();
       el.innerHTML = '<div class="lbl">Name</div><input class="namein" id="sm-namein" value="' + esc(WZ.name) + '">' +
-        '<div class="lbl">Summary</div><div class="sum">' + [['Colors', '<span style="display:inline-flex;gap:3px">' + WZ.cols.map(c => '<i style="width:14px;height:14px;border-radius:4px;display:inline-block;background:' + hex(c) + '"></i>').join('') + '</span> ' + (WZ.blend ? 'blended' : 'blocks'), 0], ['Motion', esc(m.name), 1], ['Feel', 'speed ' + Math.round(WZ.speed * 100) + (m.am.length ? ' · ' + (m.amWord || 'amount').toLowerCase() + ' ' + Math.round(WZ.amount * 100) : '') + ' · brightness ' + Math.round(WZ.bri / 2.55) + '%', 2], ['Where', WZ.runs.length === RUNS.length ? 'Whole roof' : WZ.runs.map(r => RUNS[r].name).join(', '), 3], ['Extras', Object.entries(WZ.extras).filter(([, v]) => v).map(([k]) => ({ twinkle: 'twinkle', breathe: 'breathing', sway: 'sway', soft: 'soft edges' })[k]).join(', ') || 'none', 4]].map(r => '<div><span>' + r[0] + '</span><b>' + r[1] + '<a data-go="' + r[2] + '">change</a></b></div>').join('') + '</div>' +
+        '<div class="lbl">Summary</div><div class="sum">' + [['Colors', '<span style="display:inline-flex;gap:3px">' + WZ.cols.map(c => '<i style="width:14px;height:14px;border-radius:4px;display:inline-block;background:' + hex(c) + '"></i>').join('') + '</span> ' + (WZ.blend ? 'blended' : 'blocks'), 0], ['Motion', esc(m.name), 1], ['Feel', 'speed ' + Math.round(WZ.speed * 100) + (m.am.length ? ' · ' + (m.amWord || 'amount').toLowerCase() + ' ' + Math.round(WZ.amount * 100) : '') + ' · brightness ' + Math.round(WZ.bri / 2.55) + '%', 2], ['Where', esc(whereLabel()), 3], ['Extras', Object.entries(WZ.extras).filter(([, v]) => v).map(([k]) => ({ twinkle: 'twinkle', breathe: 'breathing', sway: 'sway', soft: 'soft edges' })[k]).join(', ') || 'none', 4]].map(r => '<div><span>' + r[0] + '</span><b>' + r[1] + '<a data-go="' + r[2] + '">change</a></b></div>').join('') + '</div>' +
         '<div class="lbl">Show it in</div><div class="catpick">' + H.cats().map(c => '<button data-cp="' + c[0] + '" class="' + (WZ.cats.includes(c[0]) ? 'on' : '') + '">' + c[2] + ' ' + esc(c[1]) + '</button>').join('') + '</div>' +
         '<div style="display:flex;gap:8px;margin-top:18px"><button class="btn go" id="sm-pushnow"' + (ok ? '' : ' disabled title="Needs Studio firmware extensions"') + '>▶ Save &amp; push to house</button><button class="btn" id="sm-advnow">Open in advanced builder</button></div>' +
         '<div class="note">Runs on the controller as <b>' + P.stack.layers.length + ' layer' + (P.stack.layers.length > 1 ? 's' : '') + '</b>, so it keeps going if the app is closed. Schedules, playlists and moments can use it like any look.</div>';
@@ -111,8 +137,9 @@
     el.querySelectorAll('[data-big]').forEach(r => r.oninput = () => { const k = r.dataset.big, v = +r.value / 100; if (k === 'bri') WZ.bri = Math.round(clamp(v, .05, 1) * 255); else WZ[k] = v; el.querySelector('[data-o="' + k + '"]').textContent = r.value; r.style.setProperty('--v', r.value + '%'); rebuild(); });
     el.querySelectorAll('input[type=range]').forEach(r => r.style.setProperty('--v', r.value + '%'));
     el.querySelectorAll('[data-dir]').forEach(b => b.onclick = () => { WZ.dir = b.dataset.dir; re(); });
-    el.querySelectorAll('[data-zg]').forEach(b => b.onclick = () => { WZ.runs = ZG[+b.dataset.zg][1].slice(); re(); });
-    el.querySelectorAll('[data-run]').forEach(c => c.onchange = () => { const s = new Set(WZ.runs), i = +c.dataset.run; c.checked ? s.add(i) : s.delete(i); if (!s.size) { H.toast('Pick at least one stretch', 'var(--warn)'); renderBody(); return; } WZ.runs = [...s].sort((a, b) => a - b); re(); });
+    el.querySelectorAll('[data-zg]').forEach(b => b.onclick = () => { WZ.sections = []; WZ.runs = ZG[+b.dataset.zg][1].slice(); re(); });
+    el.querySelectorAll('[data-section]').forEach(b => b.onclick = () => { const s = new Set(WZ.sections || []), id = b.dataset.section; s.has(id) ? s.delete(id) : s.add(id); if (!s.size) { H.toast('Keep at least one roof section selected', 'var(--warn)'); return; } WZ.sections = [...s]; re(); });
+    el.querySelectorAll('[data-run]').forEach(c => c.onchange = () => { const s = new Set(WZ.runs), i = +c.dataset.run; c.checked ? s.add(i) : s.delete(i); if (!s.size) { H.toast('Pick at least one stretch', 'var(--warn)'); renderBody(); return; } WZ.sections = []; WZ.runs = [...s].sort((a, b) => a - b); re(); });
     el.querySelectorAll('[data-rest]').forEach(b => b.onclick = () => { WZ.rest = b.dataset.rest; re(); });
     el.querySelectorAll('[data-ex]').forEach(d => d.onclick = e => { if (e.target.closest('[data-twc]')) return; const k = d.dataset.ex; WZ.extras[k] = !WZ.extras[k]; re(); });
     el.querySelectorAll('[data-twc]').forEach(b => b.onclick = () => { WZ.twCol = b.dataset.twc; re(); });
@@ -175,7 +202,7 @@
       if (!g.TLAsk) return H.toast('Ask AI didn’t load', 'var(--warn)');
       g.TLAsk.open({ name: WZ.name || suggestName(), P: buildStack(), onApply: (P2, o) => {
         // changes the six steps can express stay here; anything else (extra layers, blends…) continues in the advanced builder
-        const main = WZ.runs.length < RUNS.length && WZ.rest === 'glow' ? 1 : 0;
+        const main = rangeBulbs(selectedRanges()) < N && WZ.rest === 'glow' ? 1 : 0;
         const simpleOk = o.ops.every(op => op.op === 'brightness' || (['motion', 'tune', 'colors'].includes(op.op) && (op.layer | 0) === main) || (op.op === 'set' && ['reverse', 'mirror'].includes(op.key) && (op.layer | 0) === main));
         if (!simpleOk) { H.openBuilderDraft({ id: WZ.id, name: WZ.name || suggestName(), bri: P2.bri ?? WZ.bri, fade: 2, layers: P2.stack.layers, knobs: [] }); H.toast('“' + o.title + '” needs layers, so it opened in the advanced builder. Save it there.', 'var(--accent)'); return; }
         for (const op of o.ops) {
