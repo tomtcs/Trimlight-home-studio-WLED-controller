@@ -113,6 +113,7 @@
       return json({});
     }
     if (u.startsWith('/api/')) {
+      if (u === '/api/scheduler/status') return realFetch(url, opt);
       if (u === '/api/app') {
         if (SERVER) {
           const response = await realFetch(url, opt);
