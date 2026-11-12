@@ -29,4 +29,4 @@ Never expose WLED's unauthenticated local API to the public internet. This app d
 
 ## Source and licensing
 
-See [SECURITY_REVIEW.md](SECURITY_REVIEW.md) for review scope and deployment limits. No open-source license is included, so repository visibility does not grant reuse rights to contributed code or brand assets. Confirm permissions with their owners before redistributing them.
+The project source code is licensed under the MIT License; see [LICENSE](LICENSE). See [SECURITY_REVIEW.md](SECURITY_REVIEW.md) for review scope and deployment limits. Third-party firmware, libraries, trademarks, and other contributed assets may carry separate terms; retain and follow their included license and attribution notices.
