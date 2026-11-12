@@ -884,8 +884,10 @@
     raf = requestAnimationFrame(frame);
   }
   function syncFw() {
-    const ok = H.fwLayers(), el = $('fw'); el.textContent = ok ? 'Controller ready · ' + H.fwVer() : H.fwVer() ? 'Controller runs ' + H.fwVer() + ': needs Studio firmware extensions to push' : 'Controller offline'; el.className = 'chip ' + (ok ? 'ok' : 'fw');
-    $('push').disabled = !ok; $('push').title = ok ? '' : 'Needs Studio firmware extensions on the controller';
+    const ok = H.canPush(lookP()), studio = H.fwLayers(), el = $('fw');
+    el.textContent = !H.fwVer() ? 'Controller offline' : studio ? 'Studio firmware ready · ' + H.fwVer() : ok ? 'WLED-compatible look · ' + H.fwVer() : 'This look needs Studio firmware extensions';
+    el.className = 'chip ' + (ok ? 'ok' : 'fw');
+    $('push').disabled = !ok; $('push').title = ok ? '' : 'This look uses Studio layers or features unavailable in stock WLED';
   }
   function renderAll() { renderLayers(); renderLanes(); renderInspector(); renderJSON(); $('crumb').textContent = LOOK.id ? 'Builder · your look' : 'Builder · new look'; }
 
