@@ -143,16 +143,16 @@
       if (u.startsWith('/api/schedule/apply')) {
         if (!REAL) return json({ ok: true, changed: true, tonight: 'saved (demo)', via: 'demo' });
         try {
-          const request = parsed(), host = PREFS.host;
+          const request = parsed(), host = PREFS.host, slot = Number.isInteger(request.slot) && request.slot >= 240 && request.slot <= 250 ? request.slot : 240;
           {
             const current = await realFetch('http://' + host + '/json/state', { cache: 'no-store' }).then(r => r.json());
             const savedLook = request.body || { on: current.on, bri: current.bri, seg: current.seg || [] };
-            const preset = Object.assign({}, savedLook, { psave: 240, n: 'Studio · Scheduled look', o: true });
+            const preset = Object.assign({}, savedLook, { psave: slot, n: 'Studio · ' + String(request.name || 'Scheduled look').slice(0, 48), ib: true, sb: true, o: true });
             const saved = await realFetch('http://' + host + '/json/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(preset) });
             if (!saved.ok) throw new Error('WLED could not save the scheduled look.');
             await realFetch('http://' + host + '/json/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: current.on, bri: current.bri, transition: 0, seg: current.seg || [] }) });
           }
-          return json({ ok: true, changed: true, tonight: request.body ? 'preset 240 updated' : 'current WLED look saved to preset 240', via: 'wled' });
+          return json({ ok: true, changed: true, tonight: request.body ? 'preset ' + slot + ' updated' : 'current WLED look saved to preset ' + slot, via: 'wled' });
         } catch (e) { return json({ ok: false, error: e.message || 'Could not save the WLED schedule preset.' }, 502); }
       }
       if (u.startsWith('/api/ai/')) return json({ ok: false, error: 'AI looks are switched off in the demo.' });
