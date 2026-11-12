@@ -73,6 +73,8 @@
 
   /* ---------------- WLED: metadata, live feed, push ---------------- */
   const WL = { host: null, ws: null, state: null, info: null, frame: null, fxdata: [], effects: [], palettes: [] };
+  const STUDIO_EFFECTS = ['Studio Field', 'Studio Waves', 'Studio Comets', 'Studio Glints', 'Studio Noise', 'Studio Breathe'];
+  const hasStudioEffects = () => !!WL.info && STUDIO_EFFECTS.every(name => (WL.effects || []).includes(name));
   const hostReady = new Promise(r => WL._ready = r);   // pages opened straight from the URL wait for the controller's address
   const wget = p => fetch(`http://${WL.host}${p}`).then(r => r.json());
   async function wpost(body) {
@@ -204,7 +206,7 @@
     if (!isStack(P)) return true;
     const layers = P.stack.layers || [];
     const needsStudio = layers.length > 1 || layers.some(L => L.src?.kind === 'shape' || L.blend !== 'cover' || (L.mods || []).length > 0 || (L.zone?.feather || 0) > 0 || (L.motion?.slow || 1) !== 1);
-    return !needsStudio || (!!WL.info.tls && (WL.effects || []).includes('Studio Field'));
+    return !needsStudio || hasStudioEffects();
   }
   const sameP = (a, b) => !!a && !!b && JSON.stringify(norm(a)) === JSON.stringify(norm(b));
   const norm = P => ({ fx: P.fx, sx: P.sx, ix: P.ix, c1: P.c1, c2: P.c2, c3: P.c3, o1: !!P.o1, o2: !!P.o2, o3: !!P.o3, pal: P.pal, col: (P.col || []).map(c => c.slice(0, 3).map(Math.round)), spc: P.spc || 0, rev: !!P.rev, mi: !!P.mi, slow: P.slow || 1, bri: Math.round(P.bri), mycol: !!P.mycol, colors: P.colors || null, blend: !!P.blend, rep: P.rep || 1, cmode: P.cmode || null, seq: P.seq || null, parts: P.parts ? P.parts.map(pt => [pt.start, pt.stop, pt.look, pt.dir || 'n', pt.speed || 1]) : null });
@@ -246,7 +248,7 @@
     return fetch(`http://${WL.host}/json/cfg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) });
   }
   async function pushToHouse(P, id, base) {   // P = exactly what the roof gets (gallery adjustments applied); base = the look's own settings
-    if (!canPush(P)) throw new Error(WL.info ? 'This look uses Studio layers or effects that need Studio firmware extensions. Use one WLED effect layer with standard settings, or install the Studio extension firmware.' : 'The controller is offline.');
+    if (!canPush(P)) throw new Error(WL.info ? 'This look uses layers or effects the controller does not advertise. Use one standard WLED effect layer, or add controller support for those features.' : 'The controller is offline.');
     const look = BY_ID[id];
     const body = wledBody(P); await flushPalettes();
     await wpost(body);
@@ -391,7 +393,7 @@
     for (const l of LEDS) { x.beginPath(); x.arc(l.x * v.k + v.ox, l.y * v.k + v.oy, r0 * 1.05, 0, 6.2832); x.fill(); }
     v.plate = c;
   }
-  // the controller's output stage (Studio firmware): evening drift + breath, applied after the effects, so the live view
+  // optional controller output stage: evening drift + breath, applied after the effects, so the live view
   // doesn't include it either: apply it to everything drawn on WLED
   const TN = { on: false, p: 0, kG: 1, kB: 1, dim: 1, br: null };
   function tlsTick() {
@@ -1605,13 +1607,13 @@
     });
     renderMoments();
   }
-  /* ---- optional Studio firmware extension cards ---- */
+  /* ---- optional controller extension cards ---- */
   const hasTls = () => !!(CT && CT.st && CT.st.tls);
   const hhmm = m => String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
   const rng = (id, min, max, v, word) => '<input type="range" id="' + id + '" min="' + min + '" max="' + max + '" value="' + v + '"><output data-w="' + (word || '') + '">' + fmtW(word, v) + '</output>';
   function fmtW(w, v) { v = +v; return w === '%' ? v + '%' : w === 's' ? (v >= 60 ? (v / 60).toFixed(v % 60 ? 1 : 0) + ' min' : v + ' s') : w === 'x' ? (v / 10).toFixed(1).replace(/\.0$/, '') + '×' : String(v); }
   function tlsCards() {
-    if (!hasTls()) return '<section class="schcard"><h3>✨ More controls</h3><p class="sh">Smooth fades, evening drift, breath, moments and the restart log need the Studio firmware on the controller (optional extensions enabled). This controller runs ' + esc(CT.info.ver || '?') + '.</p></section>';
+    if (!hasTls()) return '<section class="schcard"><h3>✨ More controls</h3><p class="sh">Smooth fades, evening drift, breath, moments and the restart log require optional controller capabilities. This controller runs ' + esc(CT.info.ver || '?') + '.</p></section>';
     const t = CT.st.tls, d = t.drift, b = t.breath, F = APP.fade || { push: 2, sched: 2 }, sunset = t.sunset;
     const atSunset = d.st >= 1440;
     return '<section class="schcard"><h3>〰 Smooth fades &amp; transitions</h3><p class="sh">For subtle looks: no stair-stepping at low brightness, and looks melt into each other instead of switching.</p>' +
@@ -1766,7 +1768,7 @@
     lookSrc: l => effective(l.P),
     shapeFx: name => { const i = (WL.effects || []).indexOf(name); return i > 0 ? i : null; },
     customPalId: st => CPAL(slotFor(st)),
-    fwLayers: () => !!(WL.info && !!WL.info.tls) && (WL.effects || []).includes('Studio Field'), canPush, fwVer: () => WL.info?.ver || '', fps: () => WL.info?.leds?.fps,
+    fwLayers: hasStudioEffects, canPush, fwVer: () => WL.info?.ver || '', fps: () => WL.info?.leds?.fps,
     toast, goLibrary, makeView: cv => makeView(cv, CROP_STAGE, 1, 2), drawHouse,
     saveLook({ id, name, desc, P, cats }) {
       const u = id && APP.userLooks.find(x => x.id === id);
