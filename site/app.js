@@ -475,6 +475,7 @@
     return '<article class="card" tabindex="0" data-id="' + l.id + '"><div class="th"><canvas></canvas>' +
       '<span class="badge"><span class="dot"></span>Active on WLED</span>' + (l.custom ? '<span class="badge mine">Your look</span>' : '') +
       '<button class="star' + (st ? ' on' : '') + '" title="Add to Saved looks" data-act="star">' + (st ? '★' : '☆') + '</button>' +
+      (l.custom ? '<button class="del-look" data-act="delete" title="Delete this look" aria-label="Delete ' + esc(l.name) + '">Delete</button>' : '') +
       '<button class="qpush" data-act="push">▶ Push</button></div>' +
       '<div class="meta"><div><div class="nm">' + esc(l.name) + '<button class="rnb" data-act="rename" title="Rename">✎</button>' + (l.cats.includes('mic') ? '<span class="mic">needs mic</span>' : '') + (l.flash ? '<span class="mic" title="Fast flashing">⚡ flashes</span>' : '') + '</div><div class="mood">' + esc(l.desc || '') + '</div></div>' +
       '<div class="sw">' + cardSwatches(applyMaster(l.P)) + '</div></div></article>';
@@ -552,6 +553,7 @@
     const card = e.target.closest('.card'); if (!card || e.target.closest('input.rn')) return;
     const id = card.dataset.id, look = BY_ID[id], act = e.target.closest('[data-act]');
     if (act?.dataset.act === 'rename') { e.stopPropagation(); startRename(card.querySelector('.nm'), id); return; }
+    if (act?.dataset.act === 'delete') { e.stopPropagation(); deleteLook(id); return; }
     if (act?.dataset.act === 'star') {
       e.stopPropagation(); if (look.cats.includes('mine') || look.custom) return toast(look.name + ' is one of saved looks.', 'var(--accent)');
       APP.starred[id] = !APP.starred[id]; save(['starred']); act.classList.toggle('on', !!APP.starred[id]); act.textContent = APP.starred[id] ? '★' : '☆'; renderNav(); return;
@@ -1420,6 +1422,35 @@
   let PLsel = null;
   const plById = id => APP.playlists.find(p => p.id === id);
   const plName = v => typeof v === 'string' && v.startsWith('pl:') ? (plById(v.slice(3))?.name || 'Playlist') : null;
+  function deleteLook(id) {
+    const look = BY_ID[id];
+    if (!look?.custom || !APP.userLooks.some(item => item.id === id)) return;
+    const fallback = CAT.LOOKS.find(item => item.id === 'autumn-twinkle')?.id || CAT.LOOKS[0]?.id;
+    if (!fallback) return toast('A built-in fallback look is unavailable.', 'var(--warn)');
+    if (!confirm('Delete “' + look.name + '” from Saved looks? Any schedule or playlist entries using it will switch to a built-in look. The lights currently running on WLED will not be changed.')) return;
+
+    APP.userLooks = APP.userLooks.filter(item => item.id !== id);
+    delete APP.edits[id]; delete APP.starred[id]; delete APP.plSlots[id];
+    APP.history = (APP.history || []).filter(item => item !== id);
+    const wasLastPushed = APP.lastPush?.id === id;
+    if (wasLastPushed) APP.lastPush = null;
+
+    if (SC.eveLook === id || (SC.eveLook === 'current' && wasLastPushed)) SC.eveLook = fallback;
+    if (SC.nightLook === id) SC.nightLook = fallback;
+    SC.programs.forEach(program => { if (program.look === id) program.look = fallback; });
+    APP.playlists.forEach(playlist => playlist.items.forEach(item => { if (item.look === id) item.look = fallback; }));
+
+    buildLooks();
+    SC.default = SC.eveLook === 'current'
+      ? { look: 'current', name: 'Whatever you last pushed', body: null }
+      : { look: SC.eveLook, name: nameOf(SC.eveLook), body: bodyOf(SC.eveLook) };
+    SC.programs.forEach(program => { program.lookName = nameOf(program.look); program.body = bodyOf(program.look); });
+    save(['userLooks', 'edits', 'starred', 'history', 'lastPush', 'schedule', 'playlists', 'plSlots']);
+    renderNav(); renderGallery(true);
+    if (state.route === 'schedule') fillSchedule();
+    if (state.route === 'playlists') renderPlaylists();
+    toast('Deleted “' + look.name + '”.');
+  }
   function openPlaylists() {
     showRoute('playlists'); history.replaceState(null, '', location.href.split('#')[0] + '#playlists');
     if (!PLsel && APP.playlists[0]) PLsel = APP.playlists[0].id; renderPlaylists();
