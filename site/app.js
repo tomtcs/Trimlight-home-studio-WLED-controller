@@ -77,9 +77,13 @@
   const hasStudioEffects = () => !!WL.info && STUDIO_EFFECTS.every(name => (WL.effects || []).includes(name));
   const hostReady = new Promise(r => WL._ready = r);   // pages opened straight from the URL wait for the controller's address
   const wget = p => fetch(`http://${WL.host}${p}`).then(r => r.json());
-  async function wpost(body) {
-    if (WL.ws && WL.ws.readyState === 1) { WL.ws.send(JSON.stringify(body)); return; }
-    await fetch(`http://${WL.host}/json/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  async function wpost(body, direct) {
+    if (!direct && WL.ws && WL.ws.readyState === 1) { WL.ws.send(JSON.stringify(body)); return; }
+    const r = await fetch(`http://${WL.host}/json/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error('WLED returned HTTP ' + r.status + ' to the state update.');
+    const ack = await r.json().catch(() => null);
+    if (ack?.success === false) throw new Error('WLED rejected the state update.');
+    return ack;
   }
   function connectWS() {
     try { WL.ws = new WebSocket(`ws://${WL.host}/ws`); } catch { return setTimeout(connectWS, 3000); }
@@ -251,7 +255,11 @@
     if (!canPush(P)) throw new Error(WL.info ? 'This look uses layers or effects the controller does not advertise. Use one standard WLED effect layer, or add controller support for those features.' : 'The controller is offline.');
     const look = BY_ID[id];
     const body = wledBody(P); await flushPalettes();
-    await wpost(body);
+    await wpost(body, true);
+    const applied = await wget('/json/state'), expected = body.seg.filter(s => s.stop > s.start && s.on !== false), actual = (applied.seg || []).filter(s => s.stop > s.start && s.on !== false);
+    const segmentsMatch = expected.length === actual.length && expected.every((s, k) => s.start === actual[k].start && s.stop === actual[k].stop && s.fx === actual[k].fx);
+    if (!applied.on || !segmentsMatch) throw new Error('WLED did not apply the requested segments (sent ' + expected.length + ', controller reports ' + actual.length + '). Check the controller response and LED output settings.');
+    WL.state = applied; onHouseChanged();
     APP.lastPush = { id, name: look?.name, P: clone(P), base: clone(base || P), at: Date.now() };
     APP.history = [id].concat((APP.history || []).filter(x => x !== id)).slice(0, 8);
     save(['lastPush', 'history']);
