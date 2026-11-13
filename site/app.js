@@ -74,7 +74,7 @@
   buildLooks();
 
   /* ---------------- WLED: metadata, live feed, push ---------------- */
-  const WL = { host: null, ws: null, state: null, info: null, ledConfig: null, frame: null, fxdata: [], effects: [], palettes: [] };
+  const WL = { host: null, ws: null, state: null, info: null, ledConfig: null, brightnessGamma: null, frame: null, fxdata: [], effects: [], palettes: [] };
   const STUDIO_EFFECTS = ['Studio Field', 'Studio Waves', 'Studio Comets', 'Studio Glints', 'Studio Noise', 'Studio Breathe'];
   const hasStudioEffects = () => !!WL.info && STUDIO_EFFECTS.every(name => (WL.effects || []).includes(name));
   const hostReady = new Promise(r => WL._ready = r);   // pages opened straight from the URL wait for the controller's address
@@ -236,14 +236,14 @@
   const norm = P => ({ fx: P.fx, sx: P.sx, ix: P.ix, c1: P.c1, c2: P.c2, c3: P.c3, o1: !!P.o1, o2: !!P.o2, o3: !!P.o3, pal: P.pal, col: (P.col || []).map(c => c.slice(0, 3).map(Math.round)), spc: P.spc || 0, rev: !!P.rev, mi: !!P.mi, slow: P.slow || 1, bri: Math.round(P.bri), mycol: !!P.mycol, colors: P.colors || null, blend: !!P.blend, rep: P.rep || 1, cmode: P.cmode || null, seq: P.seq || null, parts: P.parts ? P.parts.map(pt => [pt.start, pt.stop, pt.look, pt.dir || 'n', pt.speed || 1]) : null });
   // does the roof still run what we last pushed? (someone may have changed it from the WLED app)
   // does the roof run these settings? (compares the controller's live state with a look's push settings)
-  function stateMatches(P) {
+  function stateMatches(P, { matchBrightness = true } = {}) {
     const s = WL.state; if (!P || !s || !s.on) return false;
     const segs = (s.seg || []).filter(x => x.stop > x.start), g = segs[0]; if (!g) return false;
     const same = (a, b) => JSON.stringify(a.slice(0, 3).map(Math.round)) === JSON.stringify(b.slice(0, 3).map(Math.round));
-    if (isStack(P)) return Math.round(P.bri) === s.bri && TLB.matches(P, s.seg, segmentMatches);
+    if (isStack(P)) return (!matchBrightness || Math.round(P.bri) === s.bri) && TLB.matches(P, s.seg, segmentMatches);
     if (isSec(P) && P.parts.some(pt => isStack(partP(pt)))) {
       const known = APP.lastPush?.state;
-      return !!known && sameP(P, APP.lastPush.P) && s.bri === known.bri && segs.length === known.seg.length &&
+      return !!known && sameP(P, APP.lastPush.P) && (!matchBrightness || s.bri === known.bri) && segs.length === known.seg.length &&
         known.seg.every((seg, i) => segmentMatches(seg, segs[i]));
     }
     if (isSec(P)) return segs.length === P.parts.length && P.parts.every((pt, k) => { const q = effective(partP(pt)), x = segs[k]; return x.start === pt.start && x.stop === pt.stop && x.fx === q.fx && x.sx === q.sx && x.ix === q.ix && !!x.rev === !!q.rev && !!x.mi === !!q.mi; });
@@ -254,9 +254,18 @@
     const knobs = ['c1', 'c2'].every(k => g[k] === undefined || q[k] === undefined || g[k] === q[k]) && (g.c3 === undefined || q.c3 === undefined || g.c3 === Math.min(31, q.c3)) && ['o1', 'o2', 'o3'].every(k => g[k] === undefined || !!g[k] === !!q[k]);
     return segs.length === 1 && knobs && g.fx === q.fx && g.sx === q.sx && g.ix === q.ix && (g.spc || 0) === (q.spc || 0) && !!g.rev === !!q.rev && !!g.mi === !!q.mi && (g.slow || 1) === (q.slow || 1) && g.col.every((c, k) => same(c, q.col[k] || BLACK));
   }
-  function houseMatchesLastPush() { return !!APP.lastPush && stateMatches(APP.lastPush.P); }
+  function houseMatchesLastPush() {
+    if (!APP.lastPush || !WL.state?.on) return false;
+    const expected = APP.lastPush.state?.seg;
+    if (!expected) return stateMatches(APP.lastPush.P, { matchBrightness: false });
+    const live = (WL.state.seg || []).filter(s => s.stop > s.start);
+    return live.length === expected.length && expected.every(s => live.some(a => segmentMatches(s, a)));
+  }
   // a look that's on the roof but wasn't pushed from here (e.g. a preset saved before the app existed)
-  function recognizedLook() { if (!WL.state) return null; for (const l of LOOKS) if (stateMatches(applyMaster(l.P))) return l; return null; }
+  function recognizedLook() {
+    if (!WL.state?.on) return null;
+    return LOOKS.find(l => stateMatches(applyMaster(l.P))) || LOOKS.find(l => isStack(l.P) && stateMatches(applyMaster(l.P), { matchBrightness: false })) || null;
+  }
   function houseName() {
     const s = WL.state; if (!s) return '…'; if (!s.on) return 'Lights off';
     if (WL.info?.live) return 'Streaming from Studio';
@@ -264,7 +273,7 @@
     if (houseMatchesLastPush()) return BY_ID[APP.lastPush.id]?.name || APP.lastPush.name || 'Your look';
     const rl = recognizedLook(); if (rl) return rl.name;
     const ps = s.ps > 0 ? s.ps : -1;
-    return (WL.effects[s.seg?.[0]?.fx] || 'Custom') + (ps > 0 ? ' (preset)' : '') + ' · set outside the app';
+    return (WL.effects[s.seg?.[0]?.fx] || 'Custom look') + (ps > 0 ? ' · WLED preset ' + ps : ' · active WLED effect');
   }
   function houseLookId() { if (houseMatchesLastPush()) return APP.lastPush.id; const rl = recognizedLook(); return rl ? rl.id : null; }
   function deepMerge(a, b) { for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object' && !Array.isArray(a[k])) deepMerge(a[k], b[k]); else a[k] = b[k]; } return a; }
@@ -304,6 +313,7 @@
     if (!applied.on || applied.bri !== body.bri || !segmentsMatch) throw new Error('WLED did not apply the requested segments (sent ' + expected.length + ', controller reports ' + actual.length + '). Check the controller response and LED output settings.');
     WL.state = applied;
     APP.lastPush = { id, name: look?.name, P: clone(P), base: clone(base || P), state: { bri: applied.bri, seg: expected }, at: Date.now() };
+    if (APP.dimmedFrom != null) { APP.dimmedFrom = null; save(['dimmedFrom']); }
     APP.history = [id].concat((APP.history || []).filter(x => x !== id)).slice(0, 8);
     save(['lastPush', 'history']);
     onHouseChanged();
@@ -581,6 +591,7 @@
     $('footSub').textContent = ok && i ? `${i.leds?.count} bulbs · WiFi ${i.wifi?.signal ?? '–'}% · ${i.leds?.fps ?? '–'} fps` : (WL.host ? 'Reconnecting to ' + WL.host + '…' : 'WLED isn’t set up');
     $('ctrlSub').textContent = ok ? 'online' : 'offline'; $('ctrlSub').className = 'sub ' + (ok ? 'ok' : '');
     if (WL.state) { $('powerTgl').checked = !!WL.state.on; const nl = WL.state.nl || {}; $('sleepSub').textContent = nl.on ? (nl.rem > 0 ? Math.ceil(nl.rem / 60) + ' min left' : 'fading') : 'off'; }
+    syncDim();
   }
 
   /* per-row */
@@ -1213,8 +1224,7 @@
   APP.schedule = Object.assign({ onMode: 'sunset', onOffset: 0, onTime: '17:00', eveLook: 'current', nightOn: true, nightTime: '21:30', nightTimeWE: '21:30', nightMode: 'dim', nightLook: 'porch-glow-twinkle', nightBri: 10, nightFade: 5, offMode: 'sunrise', offTime: '01:00', programs: [] }, APP.schedule || {});
   const SC = APP.schedule; SC.programs = SC.programs || []; SC.weeklyLooks = SC.weeklyLooks || {};
   if (!SC.nightTimeWE) SC.nightTimeWE = SC.nightTime;
-  // the controller gamma-corrects brightness (cfg light.gc.bri), so a raw 26 is far below 10% of the light; map % of light output to the slider value
-  const pct2bri = p => clamp(Math.round(255 * Math.pow(clamp(p, 0, 100) / 100, 1 / 2.8)), 1, 255);
+  const pct2bri = p => bedtimeBrightness(p, WL.brightnessGamma);
   const fmt12 = hhmm => { if (!hhmm) return '—'; const [h, m] = hhmm.split(':').map(Number); return ((h + 11) % 12 + 1) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM'); };
   const toHM = d => {
     if (!d || !Number.isFinite(d.getTime())) return null;
@@ -1292,7 +1302,7 @@
   $('schedule').addEventListener('input', e => {
     if (e.target.id === 'nightBri') $('nightBriO').textContent = e.target.value + '%';
     if (e.target.name === 'nightMode') $('nightLookRow').style.display = e.target.value === 'look' ? '' : 'none';
-    if (e.target.closest('.schcard') && !e.target.closest('#progs')) { readSchedule(); refreshNights(); }
+    if (e.target.closest('.schcard') && !e.target.closest('#progs')) { readSchedule(); syncDim(); refreshNights(); }
   });
   $('schedule').addEventListener('change', e => {
     if (e.target.matches('#weeklyLooks [data-weekday]')) { readSchedule(); refreshNights(); }
@@ -1402,6 +1412,7 @@
     }, 5000);
     try {
       const [i, c, scheduler] = await Promise.all([wget('/json/info'), wget('/json/cfg'), fetch('/api/scheduler/status').then(r => r.json()).catch(() => null)]), on = (c.timers?.ins || []).filter(t => t.en && t.macro).length;
+      WL.brightnessGamma = c.light?.gc || {};
       const service = window.TL_REAL_WLED && scheduler?.enabled ? ' · Calendar service ' + (scheduler.state === 'error' ? 'error: ' + scheduler.message : (scheduler.message || scheduler.state)) : '';
       $('clockInfo').textContent = 'Controller clock ' + (i.time || '?') + ' · ' + on + ' timer' + (on === 1 ? '' : 's') + ' active · internet time ' + (c.if?.ntp?.en ? 'on' : 'off') + service;
     } catch { $('clockInfo').textContent = ''; }
@@ -1427,6 +1438,7 @@
       if (!WL.info) throw new Error('The WLED controller is offline.');
       if (weeklyEntries.length && SC.onMode === 'none') throw new Error('Choose sunset or a set time for “Lights on” before assigning different looks by weekday.');
       if (weeklyEntries.length && SC.onMode === 'sunset' && !modern) throw new Error('This WLED version cannot assign separate sunset looks by weekday. Set “Lights on” to a fixed time or update to WLED 16.');
+      WL.brightnessGamma = (await wget('/json/cfg')).light?.gc || {};
       updateScheduleBodies(SC);
       if (SC.eveLook !== 'current' && !SC.default.body) throw new Error('Choose an available look for the usual schedule.');
       const invalidProgram = SC.programs.find(p => p.on !== false && (!p.body || !p.start || !p.end || p.end < p.start));
@@ -1468,15 +1480,62 @@
     } catch (err) { $('schStat').textContent = '⚠️ ' + err.message; }
     btn.disabled = false;
   };
-  $('schPreview').onclick = async () => { readSchedule(); await wpost(Object.assign({}, bedtimeBody(), { transition: 20 })); toast('This is bedtime. Push a look or use “Bedtime dim now” to undo.', 'var(--accent)'); };
-  // one-tap: dim the roof to the bedtime brightness now / back to normal
-  async function dimNow() {
-    const s = WL.state; if (!s) return;
-    if (APP.dimmedFrom) { await wpost({ on: true, bri: APP.dimmedFrom, transition: 30 }); APP.dimmedFrom = null; save(['dimmedFrom']); toast('Back to normal brightness'); }
-    else { APP.dimmedFrom = s.bri; save(['dimmedFrom']); await wpost({ on: true, bri: pct2bri(SC.nightBri), transition: 30 }); toast('Dimmed to ' + SC.nightBri + '% · tap again to go back', 'var(--accent)'); }
-    syncDim();
+  $('schPreview').onclick = async () => {
+    readSchedule();
+    if (SC.nightMode !== 'look') return dimNow();
+    try {
+      if (!(await wget('/json/state')).on) return toast('The house lights are off.');
+      WL.brightnessGamma = (await wget('/json/cfg')).light?.gc || {};
+      const body = bedtimeBody();
+      delete body.transition;
+      await flushPalettes();
+      await wpost({ ...body, tt: 20 }, true);
+      WL.state = await wget('/json/state');
+      if (APP.dimmedFrom != null) { APP.dimmedFrom = null; save(['dimmedFrom']); }
+      onHouseChanged();
+      toast('Bedtime look sent to WLED.', 'var(--accent)');
+    } catch (error) { toast('Could not preview bedtime: ' + error.message, 'var(--warn)'); }
+  };
+  function bedtimeBrightness(percent, gamma) {
+    const enabled = gamma?.bri === true || (typeof gamma?.bri === 'number' && gamma.bri > 0 && gamma.bri !== 1);
+    const configured = Number(gamma?.val ?? gamma?.bri);
+    const exponent = enabled && configured >= 0.1 && configured <= 3 ? configured : 1;
+    const level = Number(percent);
+    if (!Number.isFinite(level)) throw new Error('Set a valid bedtime brightness in Schedule.');
+    return clamp(Math.round(255 * Math.pow(clamp(level, 0, 100) / 100, 1 / exponent)), 1, 255);
   }
-  function syncDim() { const on = !!APP.dimmedFrom; $('dimNowBtn').classList.toggle('on', on); $('dimNowBtn').firstChild.nextSibling.textContent = on ? 'Back to normal' : 'Bedtime dim now'; $('dimSub').textContent = on ? 'dimmed' : SC.nightBri + '%'; }
+  function brightnessRestore(state) {
+    const dim = APP.dimmedFrom;
+    return state?.on && dim?.host === WL.host && dim.to === state.bri && Number.isInteger(dim.from) && dim.from > dim.to && dim.from <= 255 ? dim.from : null;
+  }
+  async function dimNow() {
+    const button = $('dimNowBtn');
+    if (button.disabled) return;
+    button.disabled = $('schPreview').disabled = true;
+    try {
+      if (!WL.host) throw new Error('Set up the WLED controller first.');
+      const s = await wget('/json/state');
+      WL.state = s;
+      if (!s.on) return toast('The house lights are off.');
+      const restore = brightnessRestore(s);
+      if (!restore) WL.brightnessGamma = (await wget('/json/cfg')).light?.gc || {};
+      const target = restore || pct2bri(SC.nightBri);
+      if (!restore && target >= s.bri) return toast('The lights are already at or below bedtime brightness.');
+      await wpost({ bri: target, tt: 30 }, true);
+      WL.state = await wget('/json/state');
+      if (!WL.state.on || WL.state.bri !== target) throw new Error('WLED did not report the requested brightness.');
+      APP.dimmedFrom = restore ? null : { host: WL.host, from: s.bri, to: target };
+      save(['dimmedFrom']);
+      toast(restore ? 'Previous brightness restored.' : 'Dimming to ' + SC.nightBri + '% · tap again to restore brightness.', 'var(--accent)');
+    } catch (error) { toast('Could not change brightness: ' + error.message, 'var(--warn)'); }
+    finally { button.disabled = $('schPreview').disabled = false; onHouseChanged(); }
+  }
+  function syncDim() {
+    const on = brightnessRestore(WL.state) !== null;
+    $('dimNowBtn').classList.toggle('on', on);
+    $('dimNowBtn').firstChild.nextSibling.textContent = on ? 'Back to normal' : 'Bedtime dim now';
+    $('dimSub').textContent = on ? 'dimmed' : SC.nightBri + '%';
+  }
   syncDim();
   let savedSchedule = clone(SC);
   function updateScheduleBodies(schedule) {
@@ -1499,7 +1558,7 @@
     return scheduleRefresh;
   }
   async function refreshSavedLooks(transform) {
-    if (!WL.info || !savedSchedule?.default || $('schSave').disabled) return;
+    if (!WL.info || !savedSchedule?.default || (savedSchedule.nightOn && !WL.brightnessGamma) || $('schSave').disabled) return;
     try {
       const previous = savedSchedule, next = clone(previous);
       if (transform) transform(next);
@@ -1769,6 +1828,7 @@
     await hostReady;
     try { CT = { cfg: await wget('/json/cfg'), info: await wget('/json/info'), st: await wget('/json/state') }; } catch { $('ctGrid').innerHTML = '<p class="sh">Can’t reach the controller right now.</p>'; return; }
     WL.ledConfig = CT.cfg.hw.led;
+    WL.brightnessGamma = CT.cfg.light?.gc || {};
     renderController(); clearInterval(ctPoll); ctPoll = setInterval(pollMic, 700);
   }
   function renderRoofSectionManager() {
@@ -1984,6 +2044,7 @@
       if (expected && !samePowerSettings(current.hw?.led, c.hw.led)) throw new Error('WLED power or output settings changed. Reopen Controller to load the current values.');
       if (expected) expected.ins = current.hw.led.ins.map((bus, i) => ({ ...bus, maxpwr: expected.ins[i].maxpwr, ledma: expected.ins[i].ledma }));
       const btns = clone(current.hw.btn || {}); if (btns.ins?.[0]) btns.ins[0].macros = [+$('ctB0').value, +$('ctB1').value, +$('ctB2').value];
+      WL.brightnessGamma = current.light?.gc || {};
       const nlTbri = +$('ctNlEnd').value ? pct2bri(SC.nightBri) : 0;
       await cfgPatch({ hw: { ...(expected && { led: expected }), btn: btns }, if: { va: { alexa: $('ctAlexa').checked } }, id: { inv: $('ctInv').value.trim() || 'Roof lights' },
         light: { nl: { dur: +$('ctNlDur').value, tbri: nlTbri, mode: +$('ctNlMode').value } },
@@ -2085,6 +2146,7 @@
       WL.state = await wget('/json/state');
       const cfg = await wget('/json/cfg').catch(() => null);
       WL.ledConfig = cfg?.hw?.led || null;
+      WL.brightnessGamma = cfg ? cfg.light?.gc || {} : null;
       if (HOME.lat == null || HOME.lon == null) {
         const ntp = cfg?.if?.ntp;
         const lat = ntp?.lt == null ? NaN : Number(ntp.lt), lon = ntp?.ln == null ? NaN : Number(ntp.ln);
