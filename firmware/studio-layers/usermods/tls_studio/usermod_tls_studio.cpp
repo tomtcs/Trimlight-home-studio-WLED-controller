@@ -88,13 +88,14 @@ class TlsStudioUsermod : public Usermod {
   // Called with the strip paused, using the ID WLED actually assigned.
   void readSegment(JsonObject s, unsigned id) {
     if (id >= TLS_MAX_SEG) return;
-    if (s.containsKey("stop") && (int)s["stop"] == 0) {
-      extra[id] = Extra();
-      resetLayers.fetch_or(uint32_t(1) << id);
-      return;
-    }
     if (s.containsKey("fx")) extra[id] = Extra();
     if (hasExtraKeys(s)) parseExtras(s, extra[id]);
+  }
+
+  void clearSegment(unsigned id) {
+    if (id >= TLS_MAX_SEG) return;
+    extra[id] = Extra();
+    resetLayers.fetch_or(uint32_t(1) << id);
   }
 
   void eraseSegment(unsigned id) {
@@ -239,5 +240,6 @@ void serializeStudioSegment(JsonObject& segment, uint8_t id) {
 }
 
 void readStudioSegment(JsonObject& segment, uint8_t id) { tls_studio.readSegment(segment, id); }
+void clearStudioSegment(uint8_t id) { tls_studio.clearSegment(id); }
 void eraseStudioSegment(unsigned id) { tls_studio.eraseSegment(id); }
 void clearStudioSegments() { tls_studio.clearSegments(); }

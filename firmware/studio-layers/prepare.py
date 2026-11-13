@@ -28,7 +28,7 @@ for anchor in (
 ):
     hook = '#ifdef WLED_STUDIO_LAYERS\n  readStudioSegment(elem, id);\n#endif\n'
     if anchor.startswith('  if'):
-        hook = '  if (seg.stop == 0) {\n' + hook + '  }\n'
+        hook = '#ifdef WLED_STUDIO_LAYERS\n  if (seg.stop == 0) clearStudioSegment(id);\n#endif\n'
     else:
         hook = hook.replace('  readStudioSegment(elem, id);', '  if (seg.stop != 0) readStudioSegment(elem, id);')
     json_text = replace_once(json_text, anchor, hook + anchor)
@@ -80,8 +80,38 @@ http_text = replace_once(http_text, anchor, anchor + '''
       return;
     }
 #endif''')
+json_text = replace_once(json_text, 'void readStudioSegment(JsonObject& segment, uint8_t id);',
+                         'void readStudioSegment(JsonObject& segment, uint8_t id);\nvoid clearStudioSegment(uint8_t id);')
+
+file_source = wled / 'wled00' / 'file.cpp'
+file_text = replace_once(file_source.read_text(), 'static File f;', '''#ifdef WLED_STUDIO_LAYERS
+// The web task can store a preset while the LED loop closes or reads the same handle.
+#include <mutex>
+static std::recursive_mutex presetFileMutex;
+#endif
+static File f;''')
+for signature in (
+    'void closeFile() {',
+    'bool writeObjectToFile(const char* file, const char* key, const JsonDocument* content)\n{',
+    'bool readObjectFromFile(const char* file, const char* key, JsonDocument* dest, const JsonDocument* filter)\n{',
+):
+    file_text = replace_once(file_text, signature, signature + '''
+#ifdef WLED_STUDIO_LAYERS
+  std::lock_guard<std::recursive_mutex> lock(presetFileMutex);
+#endif''')
+
 presets_source = wled / 'wled00' / 'presets.cpp'
 presets_text = presets_source.read_text()
+anchor = '  fdo = pDoc->as<JsonObject>();\n\n  // only reset errorflag'
+presets_text = replace_once(presets_text, anchor, '''  fdo = pDoc->as<JsonObject>();
+#ifdef WLED_STUDIO_LAYERS
+  if ((fdo["ifon"] | false) && bri == 0) {
+    releaseJSONBufferLock();
+    return;
+  }
+#endif
+
+  // only reset errorflag''')
 anchor = 'void deletePreset(byte index) {'
 presets_text = replace_once(presets_text, anchor, '''#ifdef WLED_STUDIO_LAYERS
 bool writeStudioPreset(uint8_t slot, JsonObject preset) {
@@ -106,5 +136,6 @@ bool writeStudioPreset(uint8_t slot, JsonObject preset) {
 shutil.copytree(source / 'usermods' / 'tls_studio', wled / 'usermods' / 'tls_studio')
 shutil.copyfile(source / 'platformio_override.ini', wled / 'platformio_override.ini')
 for path, contents in ((json_source, json_text), (strip_source, strip_text),
-                       (http_source, http_text), (presets_source, presets_text)):
+                       (http_source, http_text), (file_source, file_text),
+                       (presets_source, presets_text)):
     path.write_text(contents)
