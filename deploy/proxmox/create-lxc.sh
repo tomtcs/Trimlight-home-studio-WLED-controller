@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set +x
 set -euo pipefail
 
 repo=https://github.com/tomtcs/Trimlight-home-studio-WLED-controller.git
@@ -16,7 +17,9 @@ Usage: bash create-lxc.sh [--yes]
 Defaults: Debian 13, unprivileged, 1 vCPU, 512 MiB RAM, 4 GiB root disk.
 Overrides: CTID, CT_HOSTNAME, TEMPLATE_STORAGE, ROOT_STORAGE, BRIDGE,
            NET0 (complete Proxmox network setting), DEBIAN_TEMPLATE,
-           STUDIO_REVISION (initial Git branch, ref, or commit).
+           STUDIO_REVISION (initial Git branch, ref, or commit),
+           SSH_PUBLIC_KEY_FILE (enable key-only root SSH using this public key).
+The root password is entered at the terminal, including when using --yes.
 HELP
 }
 
@@ -39,6 +42,14 @@ if [[ ${1:-} != --yes ]]; then
   [[ $reply =~ ^[Yy]([Ee][Ss])?$ ]] || exit 0
 fi
 
+ssh_mode=password
+ssh_options=()
+if [[ -n ${SSH_PUBLIC_KEY_FILE:-} ]]; then
+  [[ -s $SSH_PUBLIC_KEY_FILE && -r $SSH_PUBLIC_KEY_FILE ]] || { echo "SSH public key file is empty or unreadable." >&2; exit 1; }
+  ssh_mode=key
+  ssh_options=(--ssh-public-keys "$SSH_PUBLIC_KEY_FILE")
+fi
+
 template=${DEBIAN_TEMPLATE:-}
 if [[ -z $template ]]; then
   pveam update
@@ -53,30 +64,52 @@ if ! awk -v id="$template_storage:vztmpl/$template" '$1 == id {found=1} END {exi
   pveam download "$template_storage" "$template"
 fi
 
+if ! exec 3</dev/tty; then
+  echo 'A terminal is required to set the container root password.' >&2
+  exit 1
+fi
+while true; do
+  printf 'New root password for CT %s: ' "$ctid" >&2
+  IFS= read -r -s root_password <&3 || exit 1
+  printf '\nConfirm root password: ' >&2
+  IFS= read -r -s confirmation <&3 || exit 1
+  printf '\n' >&2
+  if [[ -n $root_password && $root_password == "$confirmation" && $root_password != *$'\r'* ]]; then break; fi
+  echo 'Enter matching, nonempty passwords.' >&2
+done
+unset confirmation
+exec 3<&-
+
 pct create "$ctid" "$template_storage:vztmpl/$template" \
   --hostname "$hostname" --ostype debian --unprivileged 1 \
   --cores 1 --memory 512 --swap 256 --rootfs "$root_storage:4" \
-  --net0 "$net0" --onboot 1
+  --net0 "$net0" --onboot 1 ${ssh_options[@]+"${ssh_options[@]}"}
 
 trap 'echo "Setup stopped. Container $ctid was retained. Use pct enter $ctid to inspect it." >&2' ERR
 pct start "$ctid"
-pct exec "$ctid" -- bash -se -- "$repo" "$revision" <<'GUEST'
+printf 'root:%s\n' "$root_password" | pct exec "$ctid" -- chpasswd
+unset root_password
+pct exec "$ctid" -- bash -se -- "$repo" "$revision" "$ssh_mode" <<'GUEST'
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get -o Acquire::Retries=3 -o APT::Update::Error-Mode=any update
-apt-get install -y --no-install-recommends ca-certificates curl git nginx python3 tzdata
+apt-get install -y --no-install-recommends ca-certificates curl git nginx openssh-server python3 tzdata
 install -d -m 0755 /opt/trimlight-studio
 git init -q --bare /opt/trimlight-studio/repo.git
 git --git-dir=/opt/trimlight-studio/repo.git remote add origin "$1"
 git --git-dir=/opt/trimlight-studio/repo.git fetch --no-tags --depth=1 origin "$2"
 installer=$(mktemp)
-trap 'rm -f "$installer"' EXIT
+ssh_setup=$(mktemp)
+trap 'rm -f "$installer" "$ssh_setup"' EXIT
 git --git-dir=/opt/trimlight-studio/repo.git show FETCH_HEAD:deploy/proxmox/install.sh > "$installer"
+git --git-dir=/opt/trimlight-studio/repo.git show FETCH_HEAD:deploy/proxmox/configure-ssh.sh > "$ssh_setup"
+bash "$ssh_setup" "$3"
 bash "$installer"
 GUEST
 trap - ERR
 ip=$(pct exec "$ctid" -- ip -4 -o addr show dev eth0 scope global | awk 'NR==1 {sub(/\/.*/, "", $4); print $4}') || ip=
 printf '\nTrimlight Studio is ready in CT %s.\n' "$ctid"
 if [[ -n $ip ]]; then printf 'Open http://%s:8080\n' "$ip"; else printf 'Find its address with pct exec %s -- ip -br addr.\n' "$ctid"; fi
+if [[ -n $ip ]]; then printf 'SSH: ssh root@%s (%s authentication)\n' "$ip" "$ssh_mode"; fi
 printf 'Update from the Proxmox shell with: pct exec %s -- update\n' "$ctid"
 printf 'The calendar scheduler starts paused. Restore your Studio backup before enabling it.\n'

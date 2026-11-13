@@ -19,13 +19,38 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check shell syntax
         run: |
-          for file in deploy/proxmox/{create-lxc.sh,install.sh,update}; do
+          for file in deploy/proxmox/{create-lxc.sh,configure-ssh.sh,install.sh,update}; do
             bash -n "$file"
           done
       - name: Install native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends nginx
+          sudo apt-get install -y --no-install-recommends nginx openssh-server sshpass
+      - name: Verify root SSH in both authentication modes
+        run: |
+          sudo bash -se -- "$PWD" <<'TEST'
+          set -euo pipefail
+          scratch=$(mktemp -d)
+          trap 'rm -rf -- "$scratch"' EXIT
+          password=$(openssl rand -hex 24)
+          printf 'root:%s\n' "$password" | chpasswd
+          passwd -S root | grep -q '^root P '
+          bash "$1/deploy/proxmox/configure-ssh.sh" password
+          ssh_args=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="$scratch/known_hosts" -o ConnectTimeout=5)
+          password_login() {
+            sshpass -d 3 ssh "${ssh_args[@]}" -o PreferredAuthentications=password root@127.0.0.1 id -u 3<<< "$password"
+          }
+          test "$(password_login)" = 0
+          ssh-keygen -q -t ed25519 -N '' -f "$scratch/id"
+          install -d -m 0700 /root/.ssh
+          install -m 0600 "$scratch/id.pub" /root/.ssh/authorized_keys
+          bash "$1/deploy/proxmox/configure-ssh.sh" key
+          test "$(ssh "${ssh_args[@]}" -o BatchMode=yes -o IdentitiesOnly=yes -i "$scratch/id" root@127.0.0.1 id -u)" = 0
+          if password_login; then
+            echo 'Password authentication was accepted in key-only mode.' >&2
+            exit 1
+          fi
+          TEST
       - name: Verify installation, update, and rollback
         run: |
           sudo bash -se -- "$PWD" <<'TEST'

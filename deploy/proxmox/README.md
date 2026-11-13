@@ -15,6 +15,20 @@ ROOT_STORAGE=local-zfs NET0='name=eth0,bridge=vmbr0,tag=50,ip=dhcp' bash create-
 
 Open the container address shown by the script on port **8080**. The browser and the LXC both need network access to WLED. Use the controller’s LAN IP if its hostname is unavailable. The LXC also needs outbound HTTPS to GitHub and access to its configured Debian package mirrors. Keep the Studio web interface on your trusted LAN.
 
+## Root login and SSH
+
+The installer asks you to enter and confirm a root password without echoing it. Use that password for the Debian login prompt in the Proxmox Console tab or connect with `ssh root@CONTAINER_IP`. Keep SSH on your trusted LAN. To use an SSH key for remote login, set `SSH_PUBLIC_KEY_FILE` to the path of your public key on the Proxmox node before running the installer. In that mode, the root password still works at the Debian console and SSH uses the key.
+
+For an existing LXC, use the Proxmox node shell to set the password and copy the SSH setup script into the guest. For container 100, run the following from a checkout of this repository:
+
+```sh
+pct exec 100 -- passwd root
+pct push 100 deploy/proxmox/configure-ssh.sh /root/configure-ssh.sh
+pct exec 100 -- bash /root/configure-ssh.sh password
+```
+
+Find the guest address with `pct exec 100 -- ip -br addr`. To use key-only SSH on an existing LXC, add your public key to `/root/.ssh/authorized_keys` in the guest, then run the helper with `key`.
+
 ## Move from Portainer
 
 1. In the old app, download a JSON backup from **Wiring & setup → Backup & restore**.
