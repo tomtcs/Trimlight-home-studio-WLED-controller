@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+app=/opt/trimlight-studio
+repo=$app/repo.git
+service=trimlight-studio.service
+url=http://127.0.0.1:8080
+
+case "${1:-}" in
+  -h|--help)
+    echo "Usage: update [--check]"
+    echo "Fetch Studio from GitHub main, apply the release, and restart the API."
+    exit 0 ;;
+  --check|--initial|'') ;;
+  *) echo "Usage: update [--check]" >&2; exit 2 ;;
+esac
+if (( EUID != 0 || $# > 1 )); then echo "Run update as root inside the LXC." >&2; exit 1; fi
+exec 9>"$app/update.lock"
+flock -n 9 || { echo "A Studio update is already running." >&2; exit 1; }
+
+git_repo() { git --git-dir="$repo" "$@"; }
+previous=$(readlink "$app/current" || true)
+if [[ ${1:-} == --initial ]]; then
+  [[ -z $previous ]] || { echo "Studio is already installed." >&2; exit 1; }
+else
+  git_repo fetch --no-tags --depth=1 origin refs/heads/main
+fi
+revision=$(git_repo rev-parse --verify 'FETCH_HEAD^{commit}')
+target="releases/$revision"
+
+if [[ $previous == "$target" ]]; then
+  printf 'Studio is up to date (%s).\n' "${revision:0:12}"
+  exit 0
+fi
+if [[ ${1:-} == --check ]]; then
+  printf 'Update available: %s. Run update to install it.\n' "${revision:0:12}"
+  exit 0
+fi
+
+staging=$(mktemp -d "$app/releases/.stage.XXXXXXXX")
+trap '[[ -z $staging ]] || rm -rf -- "$staging"' EXIT
+git_repo archive "$revision" server.py site nginx.conf deploy/proxmox/update | tar -xf - -C "$staging"
+python3 - "$staging/server.py" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1])
+compile(source.read_bytes(), str(source), "exec")
+PY
+test -s "$staging/site/index.html"
+bash -n "$staging/deploy/proxmox/update"
+sed -e 's@listen 80;@listen 8080;@' \
+    -e 's@/usr/share/nginx/html@/opt/trimlight-studio/current/site@' \
+    -e 's@http://api:8000@http://127.0.0.1:8000@' \
+    -e '/^  location \/api\//i\    location = /healthz { proxy_pass http://127.0.0.1:8000; }' \
+    "$staging/nginx.conf" > "$staging/trimlight-studio.conf"
+chmod 0755 "$staging"
+if [[ ! -e $app/$target ]]; then
+  mv -- "$staging" "$app/$target"
+  staging=
+fi
+
+activate() {
+  ln -sfn "$1" "$app/.next"
+  mv -Tf "$app/.next" "$app/current"
+}
+
+reload_web() {
+  if systemctl is-active --quiet nginx.service; then
+    systemctl reload nginx.service
+  else
+    systemctl start nginx.service
+  fi
+}
+
+healthy() {
+  for attempt in {1..20}; do
+    if curl -fsS --max-time 2 "$url/healthz" >/dev/null &&
+       curl -fsS --max-time 2 "$url/" >/dev/null &&
+       curl -fsS --max-time 2 "$url/api/bootstrap.js" >/dev/null; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+if [[ -n $previous ]]; then
+  install -d -m 0700 "$app/backups"
+  python3 - "$app/backups/studio-before-update.sqlite3" <<'PY'
+from pathlib import Path
+import os
+import sqlite3
+import sys
+
+backup = Path(sys.argv[1])
+temporary = backup.with_suffix(".tmp")
+os.umask(0o077)
+temporary.unlink(missing_ok=True)
+with sqlite3.connect("file:/var/lib/trimlight-studio/studio.sqlite3?mode=ro", uri=True) as source:
+    with sqlite3.connect(temporary) as target:
+        source.backup(target)
+temporary.replace(backup)
+PY
+fi
+
+activate "$target"
+if nginx -t && systemctl restart "$service" && reload_web && healthy; then
+  install -m 0755 "$app/current/deploy/proxmox/update" /usr/local/sbin/.trimlight-update
+  mv -Tf /usr/local/sbin/.trimlight-update /usr/local/sbin/update
+  printf 'Studio updated to %s.\n' "${revision:0:12}"
+  exit 0
+fi
+
+if [[ -n $previous ]]; then
+  activate "$previous"
+  if systemctl restart "$service" && reload_web && healthy; then
+    echo "Update failed its health check. The previous release is running again." >&2
+  else
+    echo "Update failed. The previous release is selected but did not pass its health check." >&2
+  fi
+else
+  systemctl stop "$service" || true
+  rm -f "$app/current"
+  echo "The first Studio release did not start." >&2
+fi
+echo "Inspect the API with: journalctl -u $service -n 60 --no-pager" >&2
+exit 1

@@ -1,0 +1,81 @@
+name: Test Proxmox native install
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/proxmox/**'
+      - 'server.py'
+      - 'nginx.conf'
+      - '.github/workflows/test-proxmox-install.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-services:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: |
+          for file in deploy/proxmox/{create-lxc.sh,install.sh,update}; do
+            bash -n "$file"
+          done
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends nginx
+      - name: Verify installation, update, and rollback
+        run: |
+          sudo bash -se -- "$PWD" <<'TEST'
+          set -euo pipefail
+          app=/opt/trimlight-studio
+          fixture=$(mktemp -d)
+          trap 'rm -rf -- "$fixture"' EXIT
+          cp -r "$1"/{deploy,site,nginx.conf,server.py} "$fixture"
+          git -C "$fixture" init -q -b main
+          git -C "$fixture" config user.name Test
+          git -C "$fixture" config user.email test@example.invalid
+          commit() {
+            git -C "$fixture" add -A
+            git -C "$fixture" commit -qm "$1"
+          }
+          verify() {
+            curl -fsS http://127.0.0.1:8080/healthz
+            curl -fsS http://127.0.0.1:8080/ >/dev/null
+            curl -fsS http://127.0.0.1:8080/api/scheduler/status |
+              python3 -c 'import json,sys; assert json.load(sys.stdin)["enabled"] is False'
+            curl -fsS http://127.0.0.1:8080/api/app |
+              python3 -c 'import json,sys; assert json.load(sys.stdin)["migrationTest"] == "retained"'
+          }
+          commit Initial
+          install -d "$app"
+          git init -q --bare "$app/repo.git"
+          git --git-dir="$app/repo.git" remote add origin "$fixture"
+          git --git-dir="$app/repo.git" fetch --no-tags origin main
+          bash "$fixture/deploy/proxmox/install.sh"
+          ss -lntH 'sport = :8000' | awk '$4 == "127.0.0.1:8000" {ok=1} END {exit !ok}'
+          curl -fsS -H 'Content-Type: application/json' -d '{"migrationTest":"retained"}' http://127.0.0.1:8080/api/app
+          verify
+          first=$(readlink "$app/current")
+          printf '\n<!-- update marker -->\n' >> "$fixture/site/index.html"
+          commit Update
+          /usr/local/sbin/update --check | grep -F 'Update available'
+          test "$(readlink "$app/current")" = "$first"
+          /usr/local/sbin/update
+          second=$(readlink "$app/current")
+          test "$second" != "$first"
+          verify
+          curl -fsS http://127.0.0.1:8080/ | grep -F 'update marker'
+          test -s "$app/backups/studio-before-update.sqlite3"
+          /usr/local/sbin/update | grep -F 'up to date'
+          printf 'raise SystemExit(1)\n' > "$fixture/server.py"
+          commit Broken
+          if /usr/local/sbin/update; then
+            echo 'Broken release was unexpectedly accepted.' >&2
+            exit 1
+          fi
+          test "$(readlink "$app/current")" = "$second"
+          verify
+          TEST
