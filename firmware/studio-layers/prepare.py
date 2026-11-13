@@ -96,9 +96,23 @@ json_text = replace_once(json_text, 'void readStudioSegment(JsonObject& segment,
 
 file_source = wled / 'wled00' / 'file.cpp'
 file_text = replace_once(file_source.read_text(), 'static File f;', '''#ifdef WLED_STUDIO_LAYERS
-// The web task can store a preset while the LED loop closes or reads the same handle.
-#include <mutex>
-static std::recursive_mutex presetFileMutex;
+// Initialize the keyed file lock during WLED setup, after the scheduler starts.
+static SemaphoreHandle_t studioFileMutex = nullptr;
+
+void initStudioFileLock() {
+  studioFileMutex = xSemaphoreCreateRecursiveMutex();
+}
+
+class StudioFileLock {
+  bool locked = false;
+public:
+  StudioFileLock() {
+    if (studioFileMutex) locked = xSemaphoreTakeRecursive(studioFileMutex, portMAX_DELAY) == pdTRUE;
+  }
+  ~StudioFileLock() { if (locked) xSemaphoreGiveRecursive(studioFileMutex); }
+};
+
+bool studioPresetStoreAvailable() { return studioFileMutex != nullptr; }
 #endif
 static File f;''')
 for signature in (
@@ -108,8 +122,16 @@ for signature in (
 ):
     file_text = replace_once(file_text, signature, signature + '''
 #ifdef WLED_STUDIO_LAYERS
-  std::lock_guard<std::recursive_mutex> lock(presetFileMutex);
+  StudioFileLock lock;
 #endif''')
+
+main_source = wled / 'wled00' / 'wled.cpp'
+anchor = '  handleBootLoop(); // check for bootloop and take action (requires WLED_FS)'
+main_text = replace_once(main_source.read_text(), anchor, '''#ifdef WLED_STUDIO_LAYERS
+  extern void initStudioFileLock();
+  initStudioFileLock();
+#endif
+''' + anchor)
 
 presets_source = wled / 'wled00' / 'presets.cpp'
 presets_text = presets_source.read_text()
@@ -126,6 +148,8 @@ presets_text = replace_once(presets_text, anchor, '''  fdo = pDoc->as<JsonObject
 anchor = 'void deletePreset(byte index) {'
 presets_text = replace_once(presets_text, anchor, '''#ifdef WLED_STUDIO_LAYERS
 bool writeStudioPreset(uint8_t slot, JsonObject preset) {
+  extern bool studioPresetStoreAvailable();
+  if (!studioPresetStoreAvailable()) return false;
   // WLED's keyed file writer expects a JSON document. Allocate only the
   // command being persisted and let the regular file writer update one slot.
   const size_t capacity = preset.memoryUsage() + measureJson(preset) + 128;
@@ -147,6 +171,6 @@ bool writeStudioPreset(uint8_t slot, JsonObject preset) {
 shutil.copytree(source / 'usermods' / 'tls_studio', wled / 'usermods' / 'tls_studio')
 shutil.copyfile(source / 'platformio_override.ini', wled / 'platformio_override.ini')
 for path, contents in ((json_source, json_text), (strip_source, strip_text),
-                       (http_source, http_text), (file_source, file_text),
+                       (http_source, http_text), (file_source, file_text), (main_source, main_text),
                        (presets_source, presets_text)):
     path.write_text(contents)

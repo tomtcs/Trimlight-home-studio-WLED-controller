@@ -1,9 +1,11 @@
 #include "wled.h"
 #include <atomic>
+#include <esp_ota_ops.h>
+#include <esp_system.h>
 #include "tls_core.h"
 
 #ifndef TLS_VERSION_TAG
-#define TLS_VERSION_TAG "-tls5"
+#define TLS_VERSION_TAG "-tls6"
 #endif
 #define TLS_MAX_SEG 32                   // the app never uses more than 32 segments
 
@@ -23,7 +25,7 @@ class TlsStudioUsermod : public Usermod {
   struct Extra {                          // everything the app sends beyond stock WLED, per segment id
     bool have = false;                    // true when the app supplied layer data for this segment
     uint8_t bm = 0, fe = 0, slow = 1;
-    tls::Stops stops;
+    tls::Stops stops{};
     tls::Mod mods[tls::MAX_MODS]; uint8_t nmods = 0;
   };
   Extra extra[TLS_MAX_SEG];
@@ -132,7 +134,14 @@ class TlsStudioUsermod : public Usermod {
     String v = String(versionString);
     if (v.indexOf(TLS_VERSION_TAG) < 0) v += TLS_VERSION_TAG;
     root["ver"] = v;
-    root["studioPresetStore"] = true;
+    extern bool studioPresetStoreAvailable();
+    root["studioPresetStore"] = studioPresetStoreAvailable();
+    JsonObject diagnostics = root.createNestedObject("studioBoot");
+    diagnostics["resetReason"] = static_cast<int>(esp_reset_reason());
+    const esp_partition_t* running = esp_ota_get_running_partition();
+    if (running) diagnostics["slot"] = running->label;
+    const esp_partition_t* next = esp_ota_get_next_update_partition(nullptr);
+    if (next) diagnostics["nextSlotBytes"] = next->size;
   }
 
   void addToConfig(JsonObject& root) override { JsonObject top = root.createNestedObject(FPSTR(_name)); top["enabled"] = enabled; }
