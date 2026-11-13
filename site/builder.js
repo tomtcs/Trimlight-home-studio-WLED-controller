@@ -899,6 +899,7 @@
     el.textContent = !H.fwVer() ? 'Controller offline' : studio ? 'Layer effects available · ' + H.fwVer() : ok ? 'WLED-compatible look · ' + H.fwVer() : 'Look uses unsupported controller features';
     el.className = 'chip ' + (ok ? 'ok' : 'fw');
     $('push').disabled = !ok; $('push').title = ok ? '' : 'This look uses effects or layer features the controller does not advertise';
+    el.title = LOOK.layers.some(l => l.src.kind === 'fx') && LOOK.layers.some(l => l.src.kind === 'shape') ? 'Standard WLED effects form the base for Studio shapes on the controller.' : '';
   }
   function renderAll() { renderLayers(); renderLanes(); renderInspector(); renderJSON(); $('crumb').textContent = LOOK.id ? 'Builder · your look' : 'Builder · new look'; }
 

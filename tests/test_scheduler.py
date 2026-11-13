@@ -38,11 +38,12 @@ class Wled:
         self.calls = []
         self.drop_after_write = False
         self.ignore_write = False
+        self.state = {"on": True, "bri": 120, "seg": [{"id": 3, "start": 0, "stop": 724}]}
 
     def __call__(self, base, path, body=None):
         self.calls.append((path, copy.deepcopy(body)))
         if path == "/json/info":
-            return {"studioPresetStore": True}
+            return {"studioPresetStore": True, "leds": {"maxseg": 32, "bootps": 3}}
         if path == "/presets.json":
             return copy.deepcopy(self.presets)
         if path == "/json/cfg":
@@ -57,6 +58,11 @@ class Wled:
                 self.presets[str(body["psstore"])] = copy.deepcopy(body["preset"])
             if self.drop_after_write:
                 raise ValueError("Timed out")
+            return {"success": True}
+        if path == "/json/state":
+            if body is None:
+                return copy.deepcopy(self.state)
+            self.state = {**body, "seg": [segment for segment in body["seg"] if segment["stop"]]}
             return {"success": True}
         raise AssertionError((path, body))
 
@@ -214,6 +220,33 @@ class SchedulerTests(unittest.TestCase):
         status, _ = self.post("/api/schedule/save", {"expectedSchedule": None})
         self.assertEqual(status, 409)
         self.assertEqual(self.controller.calls, [])
+
+    def test_schedule_save_rejects_invalid_timers_before_controller_traffic(self):
+        status, _ = self.post("/api/schedule/save", {"expectedSchedule": self.schedule, "schedule": self.schedule, "presets": [], "timers": [{"en": 1}]})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.controller.calls, [])
+
+    def test_push_replaces_stale_segments_and_saves_boot_without_reapplying(self):
+        self.post("/api/scheduler/status", {"enabled": False})
+        status, result = self.post("/api/controller/push", {**self.body, "name": "Studio · American Flag"})
+        self.assertEqual(status, 200)
+        self.assertEqual(result["state"]["seg"], self.body["seg"][:1])
+        self.assertEqual(self.controller.writes[0][1]["seg"][-1], {"id": 3, "stop": 0})
+        self.assertEqual(self.controller.writes[1][1]["psstore"], 3)
+        self.assertNotIn("bootWarning", result)
+        self.assertEqual(len(self.controller.writes), 2)
+
+    def test_auxiliary_edit_updates_bedtime_only_when_enabled(self):
+        server.scheduler_tick()
+        self.post("/api/scheduler/status", {"enabled": False})
+        schedule = {**self.schedule, "auxiliaryPresets": [{"slot": 241, "name": "Bedtime", "body": {"ifon": True, "bri": 60}}]}
+        self.post("/api/app", {"schedule": schedule, "expectedSchedule": self.schedule})
+        server.scheduler_tick()
+        self.assertEqual(len(self.controller.writes), 1)
+        self.post("/api/scheduler/status", {"enabled": True})
+        server.scheduler_tick()
+        self.assertEqual(len(self.controller.writes), 2)
+        self.assertTrue(self.controller.presets["241"]["ifon"])
 
     def test_schedule_save_keeps_led_settings_and_skips_unchanged_writes(self):
         timers = [{"en": 1, "hour": 254, "min": -5, "macro": 240, "dow": 127}]

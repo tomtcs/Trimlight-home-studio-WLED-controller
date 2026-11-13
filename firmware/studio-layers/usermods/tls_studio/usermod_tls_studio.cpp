@@ -85,6 +85,8 @@ class TlsStudioUsermod : public Usermod {
   }
 
  public:
+  bool isOverlayEffect(uint8_t mode) const { return enabled && initDone && typeOfMode(mode) != tls::SH_NONE; }
+
   // Called with the strip paused, using the ID WLED actually assigned.
   void readSegment(JsonObject s, unsigned id) {
     if (id >= TLS_MAX_SEG) return;
@@ -243,3 +245,4 @@ void readStudioSegment(JsonObject& segment, uint8_t id) { tls_studio.readSegment
 void clearStudioSegment(uint8_t id) { tls_studio.clearSegment(id); }
 void eraseStudioSegment(unsigned id) { tls_studio.eraseSegment(id); }
 void clearStudioSegments() { tls_studio.clearSegments(); }
+bool isStudioOverlayEffect(uint8_t mode) { return tls_studio.isOverlayEffect(mode); }

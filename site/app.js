@@ -296,7 +296,7 @@
     const look = BY_ID[id];
     const body = wledBody(P); await flushPalettes();
     const expected = body.seg.filter(s => s.stop > s.start);
-    const response = await fetch('/api/controller/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, seg: expected }) });
+    const response = await fetch('/api/controller/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, seg: expected, name: 'Studio · ' + (look?.name || 'look') }) });
     const result = await response.json().catch(() => null);
     if (!response.ok || !result?.state) throw new Error(result?.error || 'Could not apply the look (HTTP ' + response.status + ').');
     const applied = result.state, actual = (applied.seg || []).filter(s => s.stop > s.start);
@@ -308,9 +308,7 @@
     save(['lastPush', 'history']);
     onHouseChanged();
     refreshScheduleBodies();
-    // keep it after a power blip: save as preset 3 and make that the boot look
-    try { await wpost({ psave: 3, n: 'Studio · ' + (look?.name || 'look'), ib: true, sb: true, bootps: 3 }, true); }
-    catch (error) { toast('Look applied. Could not save the WLED boot preset: ' + error.message, 'var(--warn)'); }
+    if (result.bootWarning) toast('Look applied. Could not save the WLED boot preset: ' + result.bootWarning, 'var(--warn)');
   }
 
   /* ---------------- preview engine ---------------- */

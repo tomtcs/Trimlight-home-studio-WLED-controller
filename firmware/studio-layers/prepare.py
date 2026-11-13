@@ -52,6 +52,17 @@ for erase in ('_segments.erase(_segments.begin() + i);', '_segments.erase(_segme
     if erase not in strip_text:
         raise SystemExit('Unexpected WLED segment compaction code.')
     strip_text = strip_text.replace(erase, '\n#ifdef WLED_STUDIO_LAYERS\n      eraseStudioSegment(i);\n#endif\n      ' + erase)
+anchor = 'void WS2812FX::show() {'
+strip_text = replace_once(strip_text, anchor, '''#ifdef WLED_STUDIO_LAYERS
+bool isStudioOverlayEffect(uint8_t mode);
+#endif
+
+''' + anchor)
+anchor = '      blendSegment(seg);              // blend segment\'s buffer into frame buffer'
+strip_text = replace_once(strip_text, anchor, '''#ifdef WLED_STUDIO_LAYERS
+      if (isStudioOverlayEffect(seg.mode)) continue; // Studio overlays draw in the show callback.
+#endif
+''' + anchor)
 
 http_source = wled / 'wled00' / 'wled_server.cpp'
 http_text = http_source.read_text()

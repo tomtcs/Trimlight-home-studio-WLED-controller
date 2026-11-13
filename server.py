@@ -219,6 +219,8 @@ def preset_matches(stored, expected, *, legacy=False):
                 return False
             for field, item in want.items():
                 other = got.get(field, index if field == "id" else None)
+                if field == "slow" and item == 1 and other is None:
+                    continue
                 if field == "col" and isinstance(other, list) and isinstance(item, list):
                     rgbw = lambda colors: [color + [0] * (4 - len(color)) if isinstance(color, list) else color for color in colors]
                     if rgbw(other) == rgbw(item):
@@ -332,7 +334,15 @@ def configure_timers(base, timers, location):
     wanted_ntp = {"en": True}
     if isinstance(location, dict) and all(type(location.get(key)) in (int, float) and abs(location[key]) <= limit for key, limit in (("lt", 90), ("ln", 180))):
         wanted_ntp.update(lt=location["lt"], ln=location["ln"])
-    timer_keys = lambda entries: sorted((t.get("hour"), t.get("min"), t.get("macro"), t.get("dow")) for t in entries if t.get("en") and t.get("macro"))
+    def timer_keys(entries):
+        keys = []
+        for timer in entries:
+            if timer.get("en") and timer.get("macro"):
+                start = timer.get("start") or {}
+                end = timer.get("end") or {}
+                keys.append((timer["hour"], timer["min"], timer["macro"], timer["dow"],
+                             start.get("mon", 1), start.get("day", 1), end.get("mon", 12), end.get("day", 31)))
+        return sorted(keys)
     current = config.setdefault("timers", {}).get("ins", [])
     if timer_keys(current) != timer_keys(timers) or any(ntp.get(key) != value for key, value in wanted_ntp.items()):
         ntp.update(wanted_ntp)
@@ -618,6 +628,27 @@ class Handler(BaseHTTPRequestHandler):
                         command["seg"].extend({"id": segment["id"], "stop": 0} for segment in current.get("seg", []) if segment["id"] not in ids)
                         wled_json(base, "/json/state", {**command, "live": False})
                         result = {"ok": True, "state": wled_json(base, "/json/state")}
+                        active = [segment for segment in result["state"].get("seg", []) if segment.get("stop", 0) > segment.get("start", 0)]
+                        expected = [segment for segment in command["seg"] if segment.get("stop", 0) > segment.get("start", 0)]
+                        if result["state"].get("on") == command.get("on") and result["state"].get("bri") == command.get("bri") and preset_matches(
+                            {"seg": active}, {"seg": [{key: value for key, value in segment.items() if key != "n"} for segment in expected]},
+                        ):
+                            try:
+                                boot = preset_command(incoming, incoming.get("name", "Studio look"))
+                                info = wled_json(base, "/json/info")
+                                max_segments = min(64, info.get("leds", {}).get("maxseg", 32))
+                                boot["seg"] = expected + [{"id": index, "stop": 0} for index in range(len(expected), max_segments)]
+                                if info.get("studioPresetStore") is True:
+                                    store_wled_preset(base, 3, boot, True)
+                                    if info.get("leds", {}).get("bootps") != 3:
+                                        config = wled_json(base, "/json/cfg")
+                                        config.setdefault("def", {})["ps"] = 3
+                                        config.get("hw", {}).get("led", {}).pop("ins", None)
+                                        wled_json(base, "/json/cfg", config)
+                                else:
+                                    wled_json(base, "/json/state", {"psave": 3, "n": boot["n"], "ib": True, "sb": True, "bootps": 3})
+                            except (TypeError, ValueError) as exc:
+                                result["bootWarning"] = str(exc)
                     elif path == "/api/schedule/apply":
                         selection = scheduled_selection(app, datetime.now().astimezone(), settings.get("timezone", "UTC"))
                         if not enabled:
