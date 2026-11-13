@@ -1,0 +1,50 @@
+name: Build Studio firmware
+
+on:
+  pull_request:
+    paths:
+      - 'firmware/studio-layers/**'
+      - '.github/workflows/build-studio-firmware.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  esp32-ethernet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: GLEDOPTO/WLED
+          ref: 0d4b90840b81a2bac98abcf053a2fa55659c6d45
+          path: wled
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: wled/.nvmrc
+      - run: python -m pip install platformio==6.1.19
+      - run: python firmware/studio-layers/prepare.py wled
+      - run: npm ci
+        working-directory: wled
+      - run: pio run -e gledopto_elite_tls
+        working-directory: wled
+      - name: Package firmware and corresponding source
+        run: |
+          mkdir -p dist
+          cp wled/.pio/build/gledopto_elite_tls/firmware.bin dist/WLED_16.0.1-tls4_ESP32_Ethernet.bin
+          cp wled/LICENSE dist/WLED-LICENSE
+          git -C wled archive HEAD | gzip > dist/wled-16.0.1-gledopto-source.tar.gz
+          tar -czf dist/studio-layers-source.tar.gz firmware/studio-layers
+          cd dist
+          sha256sum WLED_16.0.1-tls4_ESP32_Ethernet.bin > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WLED-16.0.1-tls4-ESP32-Ethernet
+          path: dist/
+          if-no-files-found: error
