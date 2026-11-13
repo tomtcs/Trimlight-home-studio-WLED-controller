@@ -118,6 +118,8 @@
         const data = parsed(), ids = new Set(data.seg.map(seg => seg.id));
         data.seg.push(...st.seg.filter(seg => seg && !ids.has(seg.id)).map(seg => ({ id: seg.id, stop: 0 })));
         apply(data);
+        presets[3] = { ...clone(data), n: data.name };
+        cfg.def = { ...cfg.def, ps: 3 };
         return json({ ok: true, state: stateJSON() });
       }
       if (u === '/api/controller/presets' || u === '/api/schedule/save') {
@@ -135,7 +137,7 @@
       if (u === '/api/app') {
         if (SERVER) {
           const response = await realFetch(url, opt);
-          if (m === 'POST' && response.ok) { const data = parsed(); delete data.expectedSchedule; Object.assign(APPSTATE, data); SERVER.app = Object.assign({}, APPSTATE); SERVER.has_app = true; }
+          if (m === 'POST' && response.ok) { const data = parsed(); delete data.expectedSchedule; Object.assign(APPSTATE, data); SERVER.app = { ...SERVER.app, ...data }; SERVER.has_app = true; }
           return response;
         }
         if (m === 'POST') { const data = parsed(); delete data.expectedSchedule; Object.assign(APPSTATE, data); store(APPSTATE); return json({ ok: true }); }

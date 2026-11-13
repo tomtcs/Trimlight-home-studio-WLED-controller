@@ -1209,7 +1209,7 @@
   const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   // WLED counts Monday as bit 0 and Sunday as bit 6.
   const DOW_BITS = [64, 1, 2, 4, 8, 16, 32];
-  let persistedSchedule = clone(APP.schedule ?? null);
+  let persistedSchedule = clone((window.TL_SERVER_STATE ? window.TL_SERVER_STATE.app?.schedule : APP.schedule) ?? null);
   APP.schedule = Object.assign({ onMode: 'sunset', onOffset: 0, onTime: '17:00', eveLook: 'current', nightOn: true, nightTime: '21:30', nightTimeWE: '21:30', nightMode: 'dim', nightLook: 'porch-glow-twinkle', nightBri: 10, nightFade: 5, offMode: 'sunrise', offTime: '01:00', programs: [] }, APP.schedule || {});
   const SC = APP.schedule; SC.programs = SC.programs || []; SC.weeklyLooks = SC.weeklyLooks || {};
   if (!SC.nightTimeWE) SC.nightTimeWE = SC.nightTime;
