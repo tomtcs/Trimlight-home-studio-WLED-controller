@@ -98,7 +98,24 @@ jobs:
           commit Update
           /usr/local/sbin/update --check | grep -F 'Update available'
           test "$(readlink "$app/current")" = "$first"
-          /usr/local/sbin/update
+          # Simulate the first request reaching Nginx before the API is ready.
+          mkdir "$fixture/probe-test"
+          cat > "$fixture/probe-test/curl" <<'SH'
+          #!/bin/bash
+          if [[ ${*: -1} == */healthz && ! -e $STUDIO_PROBE_MARKER ]]; then
+            touch "$STUDIO_PROBE_MARKER"
+            echo 'curl: (22) The requested URL returned error: 502' >&2
+            exit 22
+          fi
+          exec /usr/bin/curl "$@"
+          SH
+          chmod 0755 "$fixture/probe-test/curl"
+          STUDIO_PROBE_MARKER="$fixture/probe-test/seen" PATH="$fixture/probe-test:$PATH" \
+            /usr/local/sbin/update > "$fixture/probe-test/log" 2>&1
+          test -f "$fixture/probe-test/seen"
+          grep -F 'Studio updated to' "$fixture/probe-test/log"
+          if grep -F 'error: 502' "$fixture/probe-test/log"; then exit 1; fi
+          rm -r "$fixture/probe-test"
           second=$(readlink "$app/current")
           test "$second" != "$first"
           verify
@@ -107,10 +124,11 @@ jobs:
           /usr/local/sbin/update | grep -F 'up to date'
           printf 'raise SystemExit(1)\n' > "$fixture/server.py"
           commit Broken
-          if /usr/local/sbin/update; then
+          if failure=$(/usr/local/sbin/update 2>&1); then
             echo 'Broken release was unexpectedly accepted.' >&2
             exit 1
           fi
+          grep -F 'Studio health checks timed out. Last probe:' <<< "$failure"
           test "$(readlink "$app/current")" = "$second"
           verify
           TEST
