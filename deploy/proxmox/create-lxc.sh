@@ -68,16 +68,23 @@ if ! exec 3</dev/tty; then
   echo 'A terminal is required to set the container root password.' >&2
   exit 1
 fi
+tty_settings=$(stty -g <&3)
+restore_terminal() { stty "$tty_settings" <&3; }
+trap restore_terminal EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+stty -echo <&3
 while true; do
-  printf 'New root password for CT %s: ' "$ctid" >&2
-  IFS= read -r -s root_password <&3 || exit 1
-  printf '\nConfirm root password: ' >&2
-  IFS= read -r -s confirmation <&3 || exit 1
+  IFS= read -r -p "New root password for CT $ctid: " root_password <&3 || exit 1
+  printf '\n' >&2
+  IFS= read -r -p 'Confirm root password: ' confirmation <&3 || exit 1
   printf '\n' >&2
   if [[ -n $root_password && $root_password == "$confirmation" && $root_password != *$'\r'* ]]; then break; fi
   echo 'Enter matching, nonempty passwords.' >&2
 done
 unset confirmation
+restore_terminal
+trap - EXIT INT TERM
 exec 3<&-
 
 pct create "$ctid" "$template_storage:vztmpl/$template" \
