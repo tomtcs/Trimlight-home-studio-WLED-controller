@@ -265,7 +265,9 @@
         mod: L.mods.map(m => [MOD_T[m.target] ?? 0, Math.max(0, MOD_SHAPES.findIndex(s => s[0] === m.shape)), Math.round(m.depth), Math.round(m.phase || 0), Math.round(m.per * 1000)]) };
       if (L.src.kind === 'shape') {
         let fx = H.shapeFx(SHAPES[L.src.type].fw); if (fx == null) { if (!dry) throw new Error('The controller does not advertise the ' + SHAPES[L.src.type].name + ' effect'); fx = SHAPES[L.src.type].fw + ' (not on the controller yet)'; }
-        const q = SHAPES[L.src.type].enc(L.src.p); Object.assign(base, { fx, sx: q.sx, ix: q.ix, c1: q.c1, c2: q.c2, c3: q.c3, o1: q.o1, o2: q.o2, o3: false, pal: 0, col: [[255, 160, 0], [0, 0, 0], [0, 0, 0]] });
+        const q = SHAPES[L.src.type].enc(L.src.p), colors = base.tlc.slice(0, 3).map(stop => stop.slice(0, 3));
+        while (colors.length < 3) colors.push([0, 0, 0]);
+        Object.assign(base, { fx, sx: q.sx, ix: q.ix, c1: q.c1, c2: q.c2, c3: q.c3, o1: q.o1, o2: q.o2, o3: false, pal: 0, col: colors });
       } else {
         const s = L.src; Object.assign(base, { fx: s.fx, sx: s.sx, ix: s.ix, c1: s.c1, c2: s.c2, c3: Math.min(31, s.c3), o1: !!s.o1, o2: !!s.o2, o3: !!s.o3, pal: L.customPal ? (dry ? 'custom slot' : H.customPalId(qStops(L.stops).map(([p, c]) => [Math.round(p * 255), c]))) : s.pal, col: s.col.map(c => c.slice(0, 3)) });
       }
@@ -278,7 +280,7 @@
   function matches(P, live) {
     let want; try { want = segments(P, true); } catch { return false; }
     const segs = (live || []).filter(x => x.stop > x.start);
-    return segs.length === want.length && want.every((w, k) => { const x = segs[k]; return x.start === w.start && x.stop === w.stop && x.fx === w.fx && (x.bm || 0) === w.bm && x.sx === w.sx && x.ix === w.ix; });
+    return segs.length === want.length && want.every((w, k) => { const x = segs[k]; return x.start === w.start && x.stop === w.stop && x.fx === w.fx && (x.tlsbm ?? x.bm ?? 0) === w.bm && x.sx === w.sx && x.ix === w.ix; });
   }
 
   /* ======================= model: layers, recipes ======================= */

@@ -8,7 +8,8 @@
   const isStack = P => !!(TLB && TLB.isStack(P));   // a Look Builder stack (builder.js)
   // Select the effect catalog according to the WLED compatibility version exposed by the engine.
   const V16 = !!(FXL && /^16/.test(String(FXL.version || '')));
-  const CPAL = slot => (V16 ? 200 : 255) - slot;   // /paletteN.json → palette id (WLED 16: 200-N, 0.15: 255-N)
+  const controllerV16 = () => /^(?:0\.)?16(?:\.|$)/.test(String(WL.info?.ver || ''));
+  const CPAL = slot => (controllerV16() ? 200 : 255) - slot;
   if (V16 && FXL.config) { FXL.config.outputGamma = false; FXL.config.simFps = 250; }   // previews in display space (same as WLED 16's live view, which is pre-gamma)
   const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
   const clone = o => JSON.parse(JSON.stringify(o));
@@ -77,13 +78,16 @@
   const STUDIO_EFFECTS = ['Studio Field', 'Studio Waves', 'Studio Comets', 'Studio Glints', 'Studio Noise', 'Studio Breathe'];
   const hasStudioEffects = () => !!WL.info && STUDIO_EFFECTS.every(name => (WL.effects || []).includes(name));
   const hostReady = new Promise(r => WL._ready = r);   // pages opened straight from the URL wait for the controller's address
-  const wget = p => fetch(`http://${WL.host}${p}`).then(r => r.json());
+  async function wget(p) {
+    const r = await fetch(`http://${WL.host}${p}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error('WLED returned HTTP ' + r.status + ' for ' + p + '.');
+    return r.json();
+  }
   async function wpost(body, direct) {
     if (!direct && WL.ws && WL.ws.readyState === 1) { WL.ws.send(JSON.stringify(body)); return; }
     const r = await fetch(`http://${WL.host}/json/state`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    if (!r.ok) throw new Error('WLED returned HTTP ' + r.status + ' to the state update.');
     const ack = await r.json().catch(() => null);
-    if (ack?.success === false) throw new Error('WLED rejected the state update.');
+    if (!r.ok || ack?.error || ack?.success !== true) throw new Error('WLED rejected the state update (HTTP ' + r.status + (ack?.error ? ', WLED error ' + ack.error : '') + ').');
     return ack;
   }
   function connectWS() {
@@ -211,7 +215,15 @@
       if (q.cpal) { palKey = stopsKey(q.cpal); q.pal = CPAL(slotFor(q.cpal)); }
       segs = [segFor(q, 0)];
     }
-    for (let k = segs.length; k < Math.max(10, (WL.state?.seg || []).length); k++) segs.push({ id: k, stop: 0 });
+    // Presets may run after a different look, so clear unused slots up to the controller's limit.
+    const maxSegments = WL.info?.leds?.maxseg || 32;
+    if (segs.length > maxSegments) throw new Error('This look needs ' + segs.length + ' segments. WLED supports ' + maxSegments + '.');
+    if (controllerV16()) segs = segs.map(s => {
+      if (s.bm == null) return s;
+      const { bm, ...segment } = s;
+      return { ...segment, bm: 0, tlsbm: bm };
+    });
+    for (let k = segs.length; k < maxSegments; k++) segs.push({ id: k, stop: 0 });
     const body = { on: true, bri: clamp(Math.round(P.bri), 1, 255), transition: clamp(Math.round((isStack(P) && P.fade != null ? P.fade : (APP.fade?.push ?? 2)) * 10), 0, 6000), pl: -1, lor: 0, mainseg: 0, seg: segs };
     if (palKey) body._palKey = palKey;   // remembered so the schedule's palettes are never evicted (WLED ignores the field)
     return body;
@@ -261,23 +273,29 @@
   async function cfgPatch(patch) {
     const cur = await (await fetch(`http://${WL.host}/json/cfg`, { cache: 'no-store' })).json();
     const doc = deepMerge(deepMerge(cur, patch), CFG_KEEP);
-    return fetch(`http://${WL.host}/json/cfg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) });
+    const r = await fetch(`http://${WL.host}/json/cfg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) });
+    if (!r.ok) throw new Error('WLED returned HTTP ' + r.status + ' to the settings update.');
+    return r;
   }
   async function pushToHouse(P, id, base) {   // P = exactly what the roof gets (gallery adjustments applied); base = the look's own settings
     if (!canPush(P)) throw new Error(WL.info ? 'This look uses layers or effects the controller does not advertise. Use one standard WLED effect layer, or add controller support for those features.' : 'The controller is offline.');
     const look = BY_ID[id];
-    const body = wledBody(P); await flushPalettes();
-    await wpost(body, true);
-    const applied = await wget('/json/state'), expected = body.seg.filter(s => s.stop > s.start && s.on !== false), actual = (applied.seg || []).filter(s => s.stop > s.start && s.on !== false);
-    const segmentsMatch = expected.length === actual.length && expected.every((s, k) => s.start === actual[k].start && s.stop === actual[k].stop && s.fx === actual[k].fx);
+    const body = wledBody(P), before = await wget('/json/state'); await flushPalettes();
+    const expected = body.seg.filter(s => s.stop > s.start);
+    const stale = (before.seg || []).filter(s => s.stop > s.start && s.id >= expected.length).map(s => ({ id: s.id, stop: 0 }));
+    await wpost(Object.assign({}, body, { live: false, seg: expected.concat(stale) }), true);
+    const applied = await wget('/json/state'), actual = (applied.seg || []).filter(s => s.stop > s.start);
+    const segmentsMatch = expected.length === actual.length && expected.every(s => actual.some(a => s.id === a.id && s.start === a.start && s.stop === a.stop && s.fx === a.fx && (s.on !== false) === (a.on !== false)));
     if (!applied.on || !segmentsMatch) throw new Error('WLED did not apply the requested segments (sent ' + expected.length + ', controller reports ' + actual.length + '). Check the controller response and LED output settings.');
-    WL.state = applied; onHouseChanged();
+    WL.state = applied;
     APP.lastPush = { id, name: look?.name, P: clone(P), base: clone(base || P), at: Date.now() };
     APP.history = [id].concat((APP.history || []).filter(x => x !== id)).slice(0, 8);
     save(['lastPush', 'history']);
+    onHouseChanged();
+    refreshScheduleBodies();
     // keep it after a power blip: save as preset 3 and make that the boot look
-    setTimeout(() => wpost({ psave: 3, n: 'Studio · ' + (look?.name || 'look'), ib: true, sb: true }), 2600);
-    if (!pushToHouse.bootSet) { pushToHouse.bootSet = true; setTimeout(() => cfgPatch({ def: { ps: 3 } }).catch(() => { }), 3800); }
+    try { await wpost({ psave: 3, n: 'Studio · ' + (look?.name || 'look'), ib: true, sb: true, bootps: 3 }, true); }
+    catch (error) { toast('Look applied. Could not save the WLED boot preset: ' + error.message, 'var(--warn)'); }
   }
 
   /* ---------------- preview engine ---------------- */
@@ -1089,8 +1107,9 @@
     const e = state.edit, name = BY_ID[e.id].name; state.pushing = true;
     const fill = $('pushFill'); $('pushTxt').textContent = 'Fading in on the roof…';
     fill.style.transition = 'none'; fill.style.width = '0'; void fill.offsetWidth; fill.style.transition = 'width ' + (REDUCED ? 0.01 : 2) + 's linear'; fill.style.width = '100%';
-    try { await pushToHouse(editR(), e.id, e.P); } catch (err) { toast('Push failed: ' + err.message, 'var(--warn)'); }
-    setTimeout(() => { state.pushing = false; fill.style.transition = 'none'; fill.style.width = '0'; syncEditState(); markLive(); toast(name + ' is on WLED'); }, REDUCED ? 50 : 2000);
+    try { await pushToHouse(editR(), e.id, e.P); toast(name + ' is on WLED'); }
+    catch (err) { toast('Push failed: ' + err.message, 'var(--warn)'); }
+    finally { state.pushing = false; fill.style.transition = 'none'; fill.style.width = '0'; syncEditState(); markLive(); }
   }
   $('pushBtn').addEventListener('click', doPush); $('fsPush').addEventListener('click', doPush);
   $('saveBtn').addEventListener('click', () => {
@@ -1174,8 +1193,8 @@
   const LOCATION = window.TLSettings.read(), HOME = { lat: LOCATION.lat == null ? null : Number(LOCATION.lat), lon: LOCATION.lon == null ? null : Number(LOCATION.lon) };
   const PS_TONIGHT = 240, PS_NIGHT = 241, PS_OFF = 242, PS_MORNING = 243, PS_WEEKDAY = 244;
   const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  // WLED timer bit assignments; these reproduce the established Sun–Thu (79) and Fri–Sat (48) masks.
-  const DOW_BITS = [1, 2, 4, 8, 64, 16, 32];
+  // WLED counts Monday as bit 0 and Sunday as bit 6.
+  const DOW_BITS = [64, 1, 2, 4, 8, 16, 32];
   APP.schedule = Object.assign({ onMode: 'sunset', onOffset: 0, onTime: '17:00', eveLook: 'current', nightOn: true, nightTime: '21:30', nightTimeWE: '21:30', nightMode: 'dim', nightLook: 'porch-glow-twinkle', nightBri: 10, nightFade: 5, offMode: 'sunrise', offTime: '01:00', programs: [] }, APP.schedule || {});
   const SC = APP.schedule; SC.programs = SC.programs || []; SC.weeklyLooks = SC.weeklyLooks || {};
   if (!SC.nightTimeWE) SC.nightTimeWE = SC.nightTime;
@@ -1192,7 +1211,8 @@
     const at = mins => { const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) + mins * 6e4); return d; };
     return { rise: at(720 - 4 * (HOME.lon + ha) - eq), set: at(720 - 4 * (HOME.lon - ha) - eq) };
   }
-  const bodyOf = id => { if (plName(id)) { const pl = plById(id.slice(3)); return pl && pl.items.length ? plBody(pl) : null; } return id && BY_ID[id] ? Object.assign(wledBody(applyMaster(BY_ID[id].P)), { transition: clamp(Math.round((APP.fade?.sched ?? 2) * 10), 0, 6000) }) : null; };
+  const scheduledBody = P => Object.assign(wledBody(P), { transition: clamp(Math.round((APP.fade?.sched ?? 2) * 10), 0, 6000) });
+  const bodyOf = id => { if (plName(id)) { const pl = plById(id.slice(3)); return pl && pl.items.length ? plBody(pl) : null; } return BY_ID[id] ? scheduledBody(applyMaster(BY_ID[id].P)) : null; };
   const nameOf = id => BY_ID[id]?.name || plName(id);
   const lookSel = (sel, val, withCurrent) => { sel.innerHTML = (withCurrent ? '<option value="current">Whatever I last pushed</option>' : '') + LOOKS.map(l => '<option value="' + l.id + '">' + esc(l.name) + '</option>').join('') + (APP.playlists.length ? '<optgroup label="Playlists">' + APP.playlists.map(pl => '<option value="pl:' + pl.id + '">▶ ' + esc(pl.name) + '</option>').join('') + '</optgroup>' : ''); sel.value = val; };
   const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -1245,12 +1265,7 @@
   function readSchedule() {
     const v = n => (document.querySelector('input[name=' + n + ']:checked') || {}).value;
     Object.assign(SC, { onMode: v('onMode'), onOffset: clamp(+$('onOffset').value || 0, -59, 59), onTime: $('onTime').value || '17:00', eveLook: $('eveLook').value, nightOn: $('nightOn').checked, nightTime: $('nightTime').value || '21:30', nightTimeWE: $('nightTimeWE').value || $('nightTime').value || '21:30', nightMode: v('nightMode'), nightLook: $('nightLook').value, nightBri: +$('nightBri').value, nightFade: +$('nightFade').value, offMode: v('offMode'), offTime: $('offTime').value || '01:00' });
-    // bodies = the exact WLED settings for each look the schedule uses (the server loads them into preset 240)
-    const baseLook = SC.eveLook === 'current' ? (houseLookId() || APP.lastPush?.id) : SC.eveLook;
-    SC.default = { look: SC.eveLook, name: SC.eveLook === 'current' ? (APP.lastPush?.name || 'Whatever you last pushed') : nameOf(SC.eveLook), body: baseLook ? bodyOf(baseLook) : null };
-    SC.programs.forEach(p => { p.lookName = nameOf(p.look); p.body = bodyOf(p.look); });
     SC.weeklyLooks = Object.fromEntries([...document.querySelectorAll('#weeklyLooks [data-weekday]')].filter(sel => sel.value).map(sel => [sel.dataset.weekday, sel.value]));
-    SC.weeklyBodies = Object.fromEntries(Object.entries(SC.weeklyLooks).map(([dow, id]) => [dow, { look: id, name: nameOf(id), body: bodyOf(id) }]));
     SC.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   }
   $('schedule').addEventListener('input', e => {
@@ -1264,12 +1279,12 @@
   const nightKey = d => { const w = d.getDay(); return (w === 5 || w === 6) ? SC.nightTimeWE : SC.nightTime; };   // Fri & Sat nights
   // which look plays on a date: same rules as scheduler.py (game day > latest-starting program > usual look)
   function nightFor(d) {
-    const k = iso(new Date(d.getTime() - d.getTimezoneOffset() * 6e4));
-    let best = null; SC.programs.forEach(p => { if (p.on !== false && p.start <= k && k <= p.end && (!best || p.start > best.start)) best = p; });
+    const k = iso(d);
+    let best = null; SC.programs.forEach(p => { if (p.on !== false && (BY_ID[p.look] || plName(p.look)) && p.start <= k && k <= p.end && (!best || p.start > best.start)) best = p; });
     if (best) return { look: best.look, why: best.name, src: 'program' };
     const weekly = SC.weeklyLooks[d.getDay()];
     if (weekly && BY_ID[weekly]) return { look: weekly, why: WEEKDAYS[d.getDay()] + ' look', src: 'weekly' };
-    return { look: SC.eveLook === 'current' ? (houseLookId() || APP.lastPush?.id) : SC.eveLook, why: 'Usual look', src: 'default' };
+    return { look: SC.eveLook === 'current' ? APP.lastPush?.id : SC.eveLook, why: 'Usual look', src: 'default' };
   }
   let vTonight = null, schedulerStatusTimer = null;
   function refreshNights() {
@@ -1324,10 +1339,6 @@
     showRoute('schedule'); history.replaceState(null, '', location.href.split('#')[0] + '#schedule');
     if (!vTonight) vTonight = makeView($('tonightCv'), CROP_CARD, 1.4, 2);
     fillSchedule();
-    if (!SC.timezone || !SC.weeklyBodies || SC.programs.some(p => p.on !== false && !p.body)) {
-      readSchedule();
-      fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) }).catch(() => {});
-    }
     refreshNights();
     refreshSchedulerStatus();
     if (schedulerStatusTimer) clearInterval(schedulerStatusTimer);
@@ -1350,58 +1361,84 @@
   const hm = s => s.split(':').map(Number);
   $('schSave').onclick = async () => {
     readSchedule();
+    const modern = controllerV16() || !window.TL_REAL_WLED;
     const weeklyEntries = Object.entries(SC.weeklyLooks).filter(([dow, id]) => Number.isInteger(+dow) && +dow >= 0 && +dow <= 6 && BY_ID[id]);
     const weeklyMask = weeklyEntries.reduce((mask, [dow]) => mask | DOW_BITS[+dow], 0), usualDaysMask = 127 & ~weeklyMask;
     const btn = $('schSave'); btn.disabled = true; $('schStat').innerHTML = '<span class="aispin"></span>Writing to the controller…';
     try {
+      if (!WL.info) throw new Error('The WLED controller is offline.');
       if (weeklyEntries.length && SC.onMode === 'none') throw new Error('Choose sunset or a set time for “Lights on” before assigning different looks by weekday.');
-      if (weeklyEntries.length && SC.onMode === 'sunset' && !V16) throw new Error('This WLED version cannot assign separate sunset looks by weekday. Set “Lights on” to a fixed time or update to WLED 16.');
-      await flushPalettes();   // custom palettes used by scheduled looks
-      for (const id of new Set([SC.eveLook, ...SC.programs.map(p => p.look)].filter(plName))) { const pl = plById(id.slice(3)); if (pl) await writePlaylist(pl); }
-      await fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) });
+      if (weeklyEntries.length && SC.onMode === 'sunset' && !modern) throw new Error('This WLED version cannot assign separate sunset looks by weekday. Set “Lights on” to a fixed time or update to WLED 16.');
+      updateScheduleBodies(SC);
+      if (SC.eveLook !== 'current' && !SC.default.body) throw new Error('Choose an available look for the usual schedule.');
+      const invalidProgram = SC.programs.find(p => p.on !== false && (!p.body || !p.start || !p.end || p.end < p.start));
+      if (invalidProgram) throw new Error('Choose an available look and valid dates for ' + invalidProgram.name + '.');
+      if (SC.nightOn && SC.nightMode === 'look' && !BY_ID[SC.nightLook]) throw new Error('Choose an available bedtime look.');
       const before = await wget('/json/state'), pause = ms => new Promise(r => setTimeout(r, ms));
-      for (const [dow, id] of weeklyEntries) {
-        const b = bodyOf(id); if (!b) throw new Error('The selected ' + WEEKDAYS[+dow] + ' look is no longer available.');
-        delete b._palKey;
-        await wpost(Object.assign({}, b, { psave: PS_WEEKDAY + +dow, n: 'Schedule · ' + WEEKDAYS[+dow] + ' · ' + nameOf(id), ib: true, sb: true, o: true }));
-        await pause(450);
+      await flushPalettes();   // custom palettes used by scheduled looks
+      try {
+        for (const id of new Set([SC.eveLook, ...SC.programs.map(p => p.look)].filter(plName))) { const pl = plById(id.slice(3)); if (pl) await writePlaylist(pl); }
+        for (const [dow, id] of weeklyEntries) {
+          const b = bodyOf(id); if (!b) throw new Error('The selected ' + WEEKDAYS[+dow] + ' look is no longer available.');
+          delete b._palKey;
+          await wpost(Object.assign({}, b, { psave: PS_WEEKDAY + +dow, n: 'Schedule · ' + WEEKDAYS[+dow] + ' · ' + nameOf(id), ib: true, sb: true, o: true }), true);
+          await pause(450);
+        }
+        const ntp = { en: true };
+        if (Number.isFinite(HOME.lat) && Number.isFinite(HOME.lon)) { ntp.ln = HOME.lon; ntp.lt = HOME.lat; }
+        await cfgPatch({ if: { ntp } });
+        await wpost({ time: Math.floor(Date.now() / 1000) }, true); await pause(600);
+        // bedtime + off are stored commands ("o": true); WLED runs each as it saves it, so we restore afterwards
+        if (SC.nightOn) { await wpost(Object.assign(bedtimeBody(), { psave: PS_NIGHT, n: 'Schedule · Bedtime', o: true }), true); await pause(1000); }
+        await wpost({ on: false, transition: 50, psave: PS_OFF, n: 'Schedule · Off', o: true }, true); await pause(1000);
+        // timers: regular first, then sunrise (hour 255), then sunset (hour 254: WLED 16 marks sunset this way; 0.15 told them apart by order)
+        const ins = [], T = (t, macro, dow) => { const [h, m] = hm(t); ins.push({ en: 1, hour: h, min: m, macro, dow }); };
+        if (SC.onMode === 'time' && usualDaysMask) T(SC.onTime, PS_TONIGHT, usualDaysMask);
+        if (weeklyEntries.length && SC.onMode === 'time') weeklyEntries.forEach(([dow]) => T(SC.onTime, PS_WEEKDAY + +dow, DOW_BITS[+dow]));
+        if (SC.nightOn) { if (SC.nightTime === SC.nightTimeWE) T(SC.nightTime, PS_NIGHT, 127); else { T(SC.nightTime, PS_NIGHT, 79); T(SC.nightTimeWE, PS_NIGHT, 48); } }   // Sun–Thu / Fri–Sat
+        if (SC.offMode === 'time') T(SC.offTime, PS_OFF, 127);
+        const reapply = [];
+        if (SC.nightOn) {   // re-apply bedtime every hour overnight, so a restart or WiFi drop (boot = full look) snaps back within the hour
+          const nt = t => { const [h, m] = hm(t); return ((h * 60 + m) - 720 + 1440) % 1440; };   // minutes since noon
+          const bed = [SC.nightTime, SC.nightTimeWE].map(nt).sort((a, b) => b - a)[0], end = nt(SC.offMode === 'time' ? SC.offTime : '05:00'), [, bm] = hm(SC.nightTime);
+          for (let h = 0; h < 24; h++) { const t = ((h * 60 + bm) - 720 + 1440) % 1440; if (t > bed && t < end) reapply.push({ en: 1, hour: h, min: bm, macro: PS_NIGHT, dow: 127 }); }
+        }
+        reapply.sort((a, b) => ((a.hour + 12) % 24) - ((b.hour + 12) % 24));
+        const solar = [];
+        if (!modern || SC.offMode === 'sunrise') solar.push({ en: SC.offMode === 'sunrise' ? 1 : 0, hour: 255, min: 0, macro: SC.offMode === 'sunrise' ? PS_OFF : 0, dow: 127 });
+        if (SC.onMode === 'sunset' && usualDaysMask) solar.push({ en: 1, hour: modern ? 254 : 255, min: SC.onOffset, macro: PS_TONIGHT, dow: usualDaysMask });
+        if (weeklyEntries.length && SC.onMode === 'sunset') weeklyEntries.forEach(([dow]) => solar.push({ en: 1, hour: 254, min: SC.onOffset, macro: PS_WEEKDAY + +dow, dow: DOW_BITS[+dow] }));
+        if (!modern && SC.onMode !== 'sunset') solar.push({ en: 0, hour: 255, min: 0, macro: 0, dow: 127 });
+        const maxTimers = modern ? 64 : 8, essential = ins.length + (modern ? solar.length : 0), spare = maxTimers - essential;
+        if (spare < 0) throw new Error('This schedule needs ' + essential + ' timer slots, but this controller supports ' + maxTimers + ' for these events. Reduce weekday overrides or disable an automatic event.');
+        ins.push(...reapply.slice(0, spare));
+        if (!modern) {
+          while (ins.length < maxTimers) ins.push({ en: 0, hour: 0, min: 0, macro: 0, dow: 0 });
+        }
+        ins.push(...solar);
+        await cfgPatch({ timers: { ins } });
+        await pause(800);
+        const config = await wget('/json/cfg');
+        const timerKey = t => [t.hour, t.min, t.macro, t.dow].join(',');
+        const expected = ins.filter(t => t.en).map(timerKey).sort();
+        const actual = (config.timers?.ins || []).filter(t => t.en && t.macro).map(timerKey).sort();
+        if (JSON.stringify(expected) !== JSON.stringify(actual)) throw new Error('WLED did not retain the requested timers. Check the controller schedule.');
+      } finally {
+        const seg = before.seg || [], restoredIds = new Set(seg.map(s => s.id));
+        const extra = ((await wget('/json/state')).seg || []).filter(s => !restoredIds.has(s.id)).map(s => ({ id: s.id, stop: 0 }));
+        await wpost({ on: before.on, bri: before.bri, transition: before.transition ?? 0, tt: 0, mainseg: before.mainseg, seg: seg.concat(extra) }, true);
       }
-      const ntp = { en: true };
-      if (Number.isFinite(HOME.lat) && Number.isFinite(HOME.lon)) { ntp.ln = HOME.lon; ntp.lt = HOME.lat; }
-      await cfgPatch({ if: { ntp } });
-      await wpost({ time: Math.floor(Date.now() / 1000) }); await pause(600);
-      // bedtime + off are stored commands ("o": true); WLED runs each as it saves it, so we restore afterwards
-      if (SC.nightOn) { await wpost(Object.assign(bedtimeBody(), { psave: PS_NIGHT, n: 'Schedule · Bedtime', o: true })); await pause(1000); }
-      await wpost({ on: false, transition: 50, psave: PS_OFF, n: 'Schedule · Off', o: true }); await pause(1000);
-      // timers: regular first, then sunrise (hour 255), then sunset (hour 254: WLED 16 marks sunset this way; 0.15 told them apart by order)
-      const ins = [], T = (t, macro, dow) => { const [h, m] = hm(t); ins.push({ en: 1, hour: h, min: m, macro, dow }); };
-      if (SC.onMode === 'time' && usualDaysMask) T(SC.onTime, PS_TONIGHT, usualDaysMask);
-      if (weeklyEntries.length && SC.onMode === 'time') weeklyEntries.forEach(([dow]) => T(SC.onTime, PS_WEEKDAY + +dow, DOW_BITS[+dow]));
-      if (SC.nightOn) { if (SC.nightTime === SC.nightTimeWE) T(SC.nightTime, PS_NIGHT, 127); else { T(SC.nightTime, PS_NIGHT, 79); T(SC.nightTimeWE, PS_NIGHT, 48); } }   // Sun–Thu / Fri–Sat
-      if (SC.offMode === 'time') T(SC.offTime, PS_OFF, 127);
-      const reapply = [];
-      if (SC.nightOn) {   // re-apply bedtime every hour overnight, so a restart or WiFi drop (boot = full look) snaps back within the hour
-        const nt = t => { const [h, m] = hm(t); return ((h * 60 + m) - 720 + 1440) % 1440; };   // minutes since noon
-        const bed = [SC.nightTime, SC.nightTimeWE].map(nt).sort((a, b) => b - a)[0], end = nt(SC.offMode === 'time' ? SC.offTime : '05:00'), [, bm] = hm(SC.nightTime);
-        for (let h = 0; h < 24; h++) { const t = ((h * 60 + bm) - 720 + 1440) % 1440; if (t > bed && t < end) reapply.push({ en: 1, hour: h, min: bm, macro: PS_NIGHT, dow: 127 }); }
-      }
-      reapply.sort((a, b) => ((a.hour + 12) % 24) - ((b.hour + 12) % 24));
-      const solar = [{ en: SC.offMode === 'sunrise' ? 1 : 0, hour: 255, min: 0, macro: SC.offMode === 'sunrise' ? PS_OFF : 0, dow: 127 }];
-      if (SC.onMode === 'sunset' && usualDaysMask) solar.push({ en: 1, hour: V16 ? 254 : 255, min: SC.onOffset, macro: PS_TONIGHT, dow: usualDaysMask });
-      if (weeklyEntries.length && SC.onMode === 'sunset') weeklyEntries.forEach(([dow]) => solar.push({ en: 1, hour: 254, min: SC.onOffset, macro: PS_WEEKDAY + +dow, dow: DOW_BITS[+dow] }));
-      const maxTimers = V16 ? 16 : 8, essential = ins.length - reapply.length + solar.length, spare = maxTimers - essential;
-      if (spare < 0) throw new Error('This schedule needs ' + essential + ' essential WLED timers, but this controller supports ' + maxTimers + '. Reduce the number of weekday overrides or disable an automatic event.');
-      ins.push(...reapply.slice(0, spare), ...solar);   // retain essential events; hourly bedtime re-applies use remaining timer slots
-      await cfgPatch({ timers: { ins } });
-      await pause(800);
-      const seg = (before.seg || []).map(s => ({ id: s.id, start: s.start, stop: s.stop, fx: s.fx, sx: s.sx, ix: s.ix, c1: s.c1, c2: s.c2, c3: s.c3, o1: s.o1, o2: s.o2, o3: s.o3, pal: s.pal, col: s.col, grp: s.grp, spc: s.spc, of: s.of, on: s.on, bri: s.bri }));
-      await wpost({ on: before.on, bri: before.bri, transition: 0, seg });
+      const saved = await fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) });
+      if (!saved.ok) throw new Error('The Studio API could not save the schedule.');
+      savedSchedule = clone(SC);
       // tonight's look → preset 240 (the server does this every day; force it now)
-      const tonightLook = nightFor(new Date()).look;
-      const tonightDow = new Date().getDay(), tonightSelection = nightFor(new Date()), tonightSlot = SC.weeklyLooks[tonightDow] ? PS_WEEKDAY + tonightDow : PS_TONIGHT;
-      const ap = await fetch('/api/schedule/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body: bodyOf(tonightLook), slot: tonightSlot, name: nameOf(tonightLook) || tonightSelection.why }) }).then(r => r.json());
+      const now = new Date(), tonight = nightFor(now), dow = now.getDay();
+      const slot = SC.weeklyBodies[dow]?.body ? PS_WEEKDAY + dow : PS_TONIGHT;
+      const body = tonight.src === 'default' ? SC.default.body : bodyOf(tonight.look);
+      const ap = await fetch('/api/schedule/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body, slot, name: nameOf(tonight.look) || tonight.why }) }).then(r => r.json());
+      if (!ap.ok) throw new Error(ap.error || 'WLED did not save tonight’s preset.');
       const c = await wget('/json/cfg'), n = (c.timers?.ins || []).filter(t => t.en && t.macro).length;
-      $('schStat').innerHTML = '✓ Saved · ' + n + ' timers' + (ap.ok ? ' · tonight: ' + esc(ap.tonight || '') + (SC.programs.some(p => p.on !== false) ? ' · calendar scheduler active in Docker' : '') : ' · ⚠️ ' + esc(ap.error || ''));
+      $('schStat').textContent = '✓ Saved · ' + n + ' timers · tonight: ' + (ap.tonight || '');
       toast('Schedule saved to the controller 🌙'); openSchedule();
     } catch (err) { $('schStat').textContent = '⚠️ ' + err.message; }
     btn.disabled = false;
@@ -1416,15 +1453,24 @@
   }
   function syncDim() { const on = !!APP.dimmedFrom; $('dimNowBtn').classList.toggle('on', on); $('dimNowBtn').firstChild.nextSibling.textContent = on ? 'Back to normal' : 'Bedtime dim now'; $('dimSub').textContent = on ? 'dimmed' : SC.nightBri + '%'; }
   syncDim();
-  // keep the schedule's stored copies of each look in sync with the looks themselves (e.g. after a look is redesigned)
+  let savedSchedule = clone(SC);
+  function updateScheduleBodies(schedule) {
+    const id = schedule.eveLook, last = APP.lastPush;
+    schedule.default = { look: id, name: id === 'current' ? (last?.name || 'Whatever you last pushed') : nameOf(id), body: id === 'current' ? (last?.P ? scheduledBody(last.P) : null) : bodyOf(id) };
+    schedule.programs.forEach(p => { p.lookName = nameOf(p.look); p.body = p.on === false ? null : bodyOf(p.look); });
+    schedule.weeklyBodies = Object.fromEntries(Object.entries(schedule.weeklyLooks).map(([dow, id]) => [dow, { look: id, name: nameOf(id), body: bodyOf(id) }]));
+  }
   function refreshScheduleBodies() {
-    if (!WL.host) return;
-    const before = JSON.stringify([SC.default?.body, SC.weeklyBodies, SC.programs.map(p => p.body)]);
-    const baseLook = SC.eveLook === 'current' ? (houseLookId() || APP.lastPush?.id) : SC.eveLook;
-    if (baseLook && (BY_ID[baseLook] || plName(baseLook))) SC.default = { look: SC.eveLook, name: SC.eveLook === 'current' ? (APP.lastPush?.name || 'Whatever you last pushed') : nameOf(baseLook), body: bodyOf(baseLook) };
-    SC.programs.forEach(p => { if (BY_ID[p.look]) { p.lookName = BY_ID[p.look].name; p.body = bodyOf(p.look); } });
-    SC.weeklyBodies = Object.fromEntries(Object.entries(SC.weeklyLooks || {}).map(([dow, id]) => [dow, { look: id, name: nameOf(id), body: bodyOf(id) }]));
-    if (JSON.stringify([SC.default?.body, SC.weeklyBodies, SC.programs.map(p => p.body)]) !== before) fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) });
+    if (!WL.info || !savedSchedule.default || $('schSave').disabled) return;
+    try {
+      const previous = savedSchedule, next = clone(previous);
+      updateScheduleBodies(next);
+      if (JSON.stringify(next) === JSON.stringify(previous)) return;
+      flushPalettes().then(() => {
+        if ($('schSave').disabled || savedSchedule !== previous) return;
+        return fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: next }) }).then(r => { if (r.ok) savedSchedule = next; });
+      }).catch(error => toast('Could not refresh scheduled looks: ' + error.message, 'var(--warn)'));
+    } catch (error) { toast('Could not refresh scheduled looks: ' + error.message, 'var(--warn)'); }
   }
 
 
