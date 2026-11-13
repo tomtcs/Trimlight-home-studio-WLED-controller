@@ -37,14 +37,14 @@ jobs:
       - name: Package firmware and corresponding source
         run: |
           mkdir -p dist
-          cp wled/.pio/build/gledopto_elite_tls/firmware.bin dist/WLED_16.0.1-tls4_ESP32_Ethernet.bin
+          cp wled/.pio/build/gledopto_elite_tls/firmware.bin dist/WLED_16.0.1-tls5_ESP32_Ethernet.bin
           cp wled/LICENSE dist/WLED-LICENSE
           git -C wled archive HEAD | gzip > dist/wled-16.0.1-gledopto-source.tar.gz
           tar -czf dist/studio-layers-source.tar.gz firmware/studio-layers
           cd dist
-          sha256sum WLED_16.0.1-tls4_ESP32_Ethernet.bin > SHA256SUMS
+          sha256sum WLED_16.0.1-tls5_ESP32_Ethernet.bin > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: WLED-16.0.1-tls4-ESP32-Ethernet
+          name: WLED-16.0.1-tls5-ESP32-Ethernet
           path: dist/
           if-no-files-found: error

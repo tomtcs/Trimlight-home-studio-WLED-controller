@@ -1,6 +1,6 @@
 # Studio Layers for Gledopto WLED 16.0.1
 
-The firmware targets the Gledopto GL-C-618WL and inherits Gledopto's `esp32_eth` build. It adds six Studio effects and stores the Studio layer settings in WLED presets. The controller identifies the build as `16.0.1-tls4`.
+The firmware targets the Gledopto GL-C-618WL and inherits Gledopto's `esp32_eth` build. It adds six Studio effects and stores the Studio layer settings in WLED presets. The controller identifies the build as `16.0.1-tls5`.
 
 ## Build
 
@@ -16,7 +16,7 @@ npm ci
 pio run -e gledopto_elite_tls
 ```
 
-The OTA image is `.pio/build/gledopto_elite_tls/firmware.bin`. Before upgrading, export WLED configuration and presets and save a Studio backup. After upgrading, confirm that WLED reports `16.0.1-tls4` and lists the six Studio effects. Re-push Studio looks and re-save the schedule to regenerate WLED presets with the effect IDs for this firmware. Presets created directly in WLED on older firmware may need to be recreated if their effect IDs changed.
+The OTA image is `.pio/build/gledopto_elite_tls/firmware.bin`. Before upgrading, export WLED configuration and presets and save a Studio backup. After upgrading, confirm that WLED reports `16.0.1-tls5` and lists the six Studio effects. Re-push Studio looks and re-save the schedule to regenerate WLED presets with the effect IDs for this firmware. Presets created directly in WLED on older firmware may need to be recreated if their effect IDs changed.
 
 ## Controller verification
 
