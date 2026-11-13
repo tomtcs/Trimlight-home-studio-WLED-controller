@@ -74,12 +74,16 @@ reload_web() {
 }
 
 healthy() {
+  local attempt probe_error
   for attempt in {1..20}; do
-    if curl -fsS --max-time 2 "$url/healthz" >/dev/null &&
-       curl -fsS --max-time 2 "$url/" >/dev/null &&
-       curl -fsS --max-time 2 "$url/api/bootstrap.js" >/dev/null; then return 0; fi
+    if probe_error=$({
+      curl -fsS --max-time 2 "$url/healthz" >/dev/null &&
+      curl -fsS --max-time 2 "$url/" >/dev/null &&
+      curl -fsS --max-time 2 "$url/api/bootstrap.js" >/dev/null
+    } 2>&1); then return 0; fi
     sleep 1
   done
+  printf 'Studio health checks timed out. Last probe: %s\n' "$probe_error" >&2
   return 1
 }
 
