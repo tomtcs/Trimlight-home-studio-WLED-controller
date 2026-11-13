@@ -105,6 +105,8 @@ class TlsStudioUsermod : public Usermod {
     initDone = true;
   }
 
+  void loop() override {}
+
   void readFromJsonState(JsonObject& root) override {
     if (!initDone) return;
     JsonVariant segments = root["seg"];
