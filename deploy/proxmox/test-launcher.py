@@ -20,6 +20,8 @@ elif [[ $1 == exec && $4 == bash ]]; then
   cat >/dev/null
 elif [[ $1 == exec && $4 == ip ]]; then
   printf '1: eth0 inet 192.168.5.100/24 scope global eth0\n'
+elif [[ $1 == exec && $4 == test ]]; then
+  [[ ${STUDIO_TEST_KEY:-no} == yes ]]
 fi''',
     }
     for name, script in scripts.items():
@@ -84,4 +86,10 @@ fi''',
         assert "exec 100 -- chpasswd" in log
         assert ("--ssh-public-keys" in log) == key
         assert ("key authentication" if key else "password authentication") in output.decode()
-print("Host launcher passed password confirmation, stdin transfer, and optional SSH public key tests.")
+        logfile.unlink()
+        env["STUDIO_TEST_KEY"] = "yes" if key else "no"
+        result = subprocess.run(["bash", str(launcher), "--resume", "100"], env=env, text=True, capture_output=True, check=True, timeout=10)
+        log = logfile.read_text()
+        assert "create 100" not in log and "start 100" not in log and "chpasswd" not in log
+        assert ("key authentication" if key else "password authentication") in result.stdout
+print("Host launcher passed password confirmation, stdin transfer, optional SSH keys, and resume tests.")
