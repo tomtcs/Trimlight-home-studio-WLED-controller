@@ -206,7 +206,9 @@
   function renderStackInto(S, layers, t, dt, opts) {
     const comp = S.comp && S.comp.length === N * 3 ? S.comp : (S.comp = new Float32Array(N * 3)); comp.fill(0);
     S.out = S.out || {};
-    for (const L of layers) {
+    // WLED draws its native effects first, then composites the Studio shapes.
+    const ordered = [...layers.filter(L => L.src.kind === 'fx'), ...layers.filter(L => L.src.kind === 'shape')];
+    for (const L of ordered) {
       const out = S.out[L.id] && S.out[L.id].length === N * 4 ? S.out[L.id] : (S.out[L.id] = new Float32Array(N * 4)); out.fill(0);
       const e = effOf(L, t), slow = Math.max(1, L.motion.slow || 1), shape = L.src.kind === 'shape';
       S.clk[L.id] = (S.clk[L.id] || 0) + dt * e.speed / slow; S.ms[L.id] = (S.ms[L.id] || 0) + dt * 1000;
@@ -241,7 +243,7 @@
       });
       const vis = opts && opts.solo ? L.id === opts.solo : L.on;
       if (!vis) continue;
-      const mode = opts && opts.solo ? 'cover' : L.blend, s = [0, 0, 0];
+      const mode = opts && opts.solo || L.src.kind === 'fx' ? 'cover' : L.blend, s = [0, 0, 0];
       for (let i = 0; i < N; i++) { const a = out[i * 4 + 3]; if (a <= 0) continue; s[0] = out[i * 4]; s[1] = out[i * 4 + 1]; s[2] = out[i * 4 + 2]; blendPx(mode, comp, i * 3, s, opts && opts.solo ? 1 : a); }
     }
     return comp;
@@ -260,7 +262,7 @@
   function segments(P, dry) {   // dry: for previews/matching, never claims a palette slot
     const segs = []; let id = 0;
     P.stack.layers.forEach(L => ranges(L).forEach(r => {
-      const base = { id: id++, start: r.start, stop: r.start + r.len, grp: L.zone.grp, spc: L.zone.spc, of: 0, rev: !!L.motion.rev, mi: !!L.motion.mi, slow: L.motion.slow || 1, on: L.on, bri: clamp(Math.round(L.opacity * 2.55), 0, 255), n: (L.name || '').slice(0, 30),
+      const base = { id: id++, start: r.start, stop: r.start + r.len, grp: L.zone.grp, spc: L.zone.spc, of: 0, rev: !!L.motion.rev, mi: !!L.motion.mi, slow: L.motion.slow || 1, on: L.on && L.opacity > 0, frz: false, bri: clamp(Math.round(L.opacity * 2.55), 1, 255), n: (L.name || '').slice(0, 30),
         bm: BLENDS[L.blend].code, fe: L.zone.feather | 0, tlc: qStops(L.stops).map(([p, c]) => [c[0], c[1], c[2], Math.round(p * 255)]),
         mod: L.mods.map(m => [MOD_T[m.target] ?? 0, Math.max(0, MOD_SHAPES.findIndex(s => s[0] === m.shape)), Math.round(m.depth), Math.round(m.phase || 0), Math.round(m.per * 1000)]) };
       if (L.src.kind === 'shape') {
@@ -277,10 +279,17 @@
   }
   const segCount = P => P.stack.layers.reduce((a, l) => a + ranges(l).length, 0);
   // does the roof run this stack? (live segments vs ours: bounds, effect, blend)
-  function matches(P, live) {
+  function matches(P, live, segmentMatches) {
     let want; try { want = segments(P, true); } catch { return false; }
     const segs = (live || []).filter(x => x.stop > x.start);
-    return segs.length === want.length && want.every((w, k) => { const x = segs[k]; return x.start === w.start && x.stop === w.stop && x.fx === w.fx && (x.tlsbm ?? x.bm ?? 0) === w.bm && x.sx === w.sx && x.ix === w.ix; });
+    return segs.length === want.length && want.every((w, k) => {
+      const x = segs[k], { bm, fe, tlc, mod, ...fields } = w;
+      if (fields.pal === 'custom slot') fields.pal = H.findCustomPal(tlc.map(([r, g, b, p]) => [p, [r, g, b]]));
+      if (fields.pal === null) return false;
+      if (!segmentMatches) return x.start === w.start && x.stop === w.stop && x.fx === w.fx && x.sx === w.sx && x.ix === w.ix;
+      if (!H.fwLayers()) return segmentMatches(fields, x);
+      return (x.tlsbm ?? x.bm ?? 0) === bm && segmentMatches({ ...fields, fe, tlc, mod }, x);
+    });
   }
 
   /* ======================= model: layers, recipes ======================= */
