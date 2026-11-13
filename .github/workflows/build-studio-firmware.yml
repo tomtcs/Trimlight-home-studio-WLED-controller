@@ -41,10 +41,15 @@ jobs:
           python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" --chip esp32 image_info --version 2 "$image" | tee dist/image-info.txt
           python - "$image" <<'PY'
           from pathlib import Path
+          import re
           import struct
           import sys
 
           image = Path(sys.argv[1]).read_bytes()
+          info = Path('dist/image-info.txt').read_text()
+          for field in ('Checksum', 'Validation hash'):
+              if not re.search(rf'^{field}: \S+ \(valid\)$', info, re.MULTILINE):
+                  sys.exit(f'ESP32 image {field.lower()} verification failed.')
           partitions = Path('wled/.pio/build/gledopto_elite_tls/partitions.bin').read_bytes()
           slots = {}
           for offset in range(0, len(partitions) - 31, 32):
