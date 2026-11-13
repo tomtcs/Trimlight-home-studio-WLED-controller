@@ -431,7 +431,7 @@
   function afterLoad() { sel = LOOK.layers[LOOK.layers.length - 1].id; tab = 'source'; PS = { inst: {}, clk: {}, ms: {} }; tmClear = true; $('name').value = LOOK.name; hist.length = 0; fut.length = 0; snap(true); renderAll(); }
 
   /* ---- stats / power ---- */
-  const MA_PER_BULB = 55, LIMIT = 850; let pwHist = [], PORTS = [];
+  let pwHist = [], PORTS = [], powerConfig;
   function renderStats() {
     const segs = segCount({ stack: LOOK }), nl = LOOK.layers.length, shapes = LOOK.layers.filter(l => l.src.kind === 'shape').length, mods = LOOK.layers.reduce((a, l) => a + l.mods.length, 0);
     const cost = LOOK.layers.reduce((a, l) => a + ranges(l).length * (l.src.kind === 'fx' ? 1.2 : .7), 0) + mods * .1, word = cost < 3 ? 'Light' : cost < 6 ? 'Moderate' : cost < 9 ? 'Heavy' : 'Too heavy';
@@ -441,15 +441,37 @@
     $('budget').innerHTML = 'Controller budget · ' + word.toLowerCase() + '<div class="bar"><i style="width:' + clamp(cost / 9 * 100, 4, 100) + '%"></i></div>';
   }
   function samplePower(comp) {
+    const config = H.ledConfig?.();
+    if (config !== powerConfig) { pwHist = []; powerConfig = config; }
     const g = GAM[clamp(Math.round(LOOK.bri), 0, 255)], per = PORTS.map(() => 0);
-    PORTS.forEach((p, k) => { for (const ri of p.runs) { const r = RUNS[ri]; for (let i = r.start; i < r.start + r.len; i++) per[k] += (GAM[comp[i * 3] * 255 | 0] + GAM[comp[i * 3 + 1] * 255 | 0] + GAM[comp[i * 3 + 2] * 255 | 0]) / 3 * MA_PER_BULB * g + .8; } });
+    PORTS.forEach((p, k) => {
+      const milliamps = config?.ins?.[p.port - 1]?.ledma;
+      for (const ri of p.runs) {
+        const r = RUNS[ri];
+        for (let i = r.start; i < r.start + r.len; i++) {
+          const red = GAM[comp[i * 3] * 255 | 0], green = GAM[comp[i * 3 + 1] * 255 | 0], blue = GAM[comp[i * 3 + 2] * 255 | 0];
+          per[k] += (milliamps === 255 ? Math.max(red, green, blue) * 12 : (red + green + blue) / 3 * (milliamps || 55)) * g + 1;
+        }
+      }
+    });
     pwHist.push(per); if (pwHist.length > 60) pwHist.shift();
   }
   function renderPower() {
     if (!pwHist.length) return; const avg = PORTS.map((_, k) => pwHist.reduce((a, h) => a + h[k], 0) / pwHist.length), peak = PORTS.map((_, k) => Math.max(...pwHist.map(h => h[k])));
-    $('pw').innerHTML = PORTS.map((p, k) => '<div>Output ' + p.port + ' · ' + p.n + ' bulbs<div class="m"><i style="width:' + clamp(avg[k] / (LIMIT * 1.4) * 100, 1, 100) + '%"></i><u style="left:' + (100 / 1.4) + '%"></u></div><b>' + Math.round(avg[k]) + ' mA</b> avg · peak ' + Math.round(peak[k]) + ' · limit ' + LIMIT + '</div>').join('');
-    const over = PORTS.map((p, k) => ({ p, f: LIMIT / peak[k] })).filter(o => o.f < 1), w = $('pwwarn');
-    if (over.length) { w.style.display = 'block'; w.textContent = '⚠ Over the controller’s 850 mA-per-output limit on output ' + over.map(o => o.p.port).join(' & ') + ': at its brightest the roof would dim this look to about ' + Math.round(Math.min(...over.map(o => o.f)) * 100) + '%. Lower brightness, or raise the limit once the power supply rating is known.'; } else w.style.display = 'none';
+    const global = powerConfig?.maxpwr || 0, limits = PORTS.map(p => {
+      const bus = powerConfig?.ins?.[p.port - 1];
+      return !global && bus?.ledma > 0 ? bus.maxpwr : 0;
+    });
+    $('pw').innerHTML = (global ? '<div>Total limit · ' + global + ' mA</div>' : '') + PORTS.map((p, k) => {
+      const scale = Math.max(peak[k], (limits[k] || global) * 1.4, 1);
+      const marker = limits[k] ? '<u style="left:' + (limits[k] / scale * 100) + '%"></u>' : '';
+      return '<div>Output ' + p.port + ' · ' + p.n + ' bulbs<div class="m"><i style="width:' + clamp(avg[k] / scale * 100, 1, 100) + '%"></i>' + marker + '</div><b>' + Math.round(avg[k]) + ' mA</b> avg · peak ' + Math.round(peak[k]) + (limits[k] ? ' · limit ' + limits[k] + ' mA' : '') + '</div>';
+    }).join('');
+    const over = PORTS.filter((_, k) => limits[k] && peak[k] > limits[k]);
+    const totalPeak = Math.max(...pwHist.map(sample => sample.reduce((sum, value, k) => sum + (powerConfig?.ins?.[PORTS[k].port - 1]?.ledma > 0 ? value : 0), 0)));
+    const message = global && totalPeak > global ? 'Estimated demand exceeds the ' + global + ' mA total limit.' : over.length ? 'Estimated demand exceeds the current limit on output ' + over.map(p => p.port).join(' & ') + '.' : '';
+    $('pwwarn').style.display = message ? 'block' : 'none';
+    $('pwwarn').textContent = message;
   }
   function renderJSON() { let txt; try { txt = JSON.stringify({ bri: LOOK.bri, transition: Math.round(LOOK.fade * 10), seg: segments({ stack: LOOK }, true) }, null, 1); } catch (e) { txt = e.message; } $('json').textContent = txt.replace(/\n\s+(-?\d|"#|false|true)/g, ' $1').replace(/\[\s+/g, '[').replace(/\s+\]/g, ']'); }
 

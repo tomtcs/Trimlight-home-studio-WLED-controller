@@ -74,7 +74,7 @@
   buildLooks();
 
   /* ---------------- WLED: metadata, live feed, push ---------------- */
-  const WL = { host: null, ws: null, state: null, info: null, frame: null, fxdata: [], effects: [], palettes: [] };
+  const WL = { host: null, ws: null, state: null, info: null, ledConfig: null, frame: null, fxdata: [], effects: [], palettes: [] };
   const STUDIO_EFFECTS = ['Studio Field', 'Studio Waves', 'Studio Comets', 'Studio Glints', 'Studio Noise', 'Studio Breathe'];
   const hasStudioEffects = () => !!WL.info && STUDIO_EFFECTS.every(name => (WL.effects || []).includes(name));
   const hostReady = new Promise(r => WL._ready = r);   // pages opened straight from the URL wait for the controller's address
@@ -268,8 +268,8 @@
   }
   function houseLookId() { if (houseMatchesLastPush()) return APP.lastPush.id; const rl = recognizedLook(); return rl ? rl.id : null; }
   function deepMerge(a, b) { for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object' && !Array.isArray(a[k])) deepMerge(a[k], b[k]); else a[k] = b[k]; } return a; }
-  async function cfgPatch(patch, { preserveBuses = false } = {}) {
-    const cur = await wget('/json/cfg'), doc = deepMerge(clone(cur), patch);
+  async function cfgPatch(patch, { preserveBuses = false, current } = {}) {
+    const cur = current || await wget('/json/cfg'), doc = deepMerge(clone(cur), patch);
     if (JSON.stringify(cur) === JSON.stringify(doc)) return;
     if (preserveBuses && doc.hw?.led) delete doc.hw.led.ins;
     const r = await fetch(`http://${WL.host}/json/cfg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) });
@@ -1768,6 +1768,7 @@
     $('ctGrid').innerHTML = '<p class="sh">Reading the controller…</p>';
     await hostReady;
     try { CT = { cfg: await wget('/json/cfg'), info: await wget('/json/info'), st: await wget('/json/state') }; } catch { $('ctGrid').innerHTML = '<p class="sh">Can’t reach the controller right now.</p>'; return; }
+    WL.ledConfig = CT.cfg.hw.led;
     renderController(); clearInterval(ctPoll); ctPoll = setInterval(pollMic, 700);
   }
   function renderRoofSectionManager() {
@@ -1776,20 +1777,60 @@
       (sections.length ? sections.map((s, i) => '<div class="roof-section-row" data-roof-row="' + i + '"><input type="text" data-roof-name value="' + esc(s.name) + '" maxlength="32" aria-label="Section name"><label>Bulbs <input type="number" data-roof-start min="1" max="' + N + '" value="' + (s.start + 1) + '"></label><span>to</span><label><input type="number" data-roof-stop min="1" max="' + N + '" value="' + s.stop + '" aria-label="Last bulb"></label><button type="button" class="x" data-roof-delete title="Delete section">×</button></div>').join('') : '<p class="sh">No named roof sections yet. Add ranges such as “Front gable” or “Garage eave.”</p>') +
       '<button type="button" class="btn" id="roofSectionAdd">＋ Add bulb range</button></section>';
   }
+  function powerMode(led) {
+    if (led.maxpwr > 0) return 'global';
+    return led.ins?.some(b => b.maxpwr > 0 && b.ledma > 0) ? 'output' : 'off';
+  }
+  function currentInput(input, min, max, label) {
+    const value = Number(input.value);
+    if (!input.value.trim() || !Number.isInteger(value) || value < min || value > max) throw new Error(`${label} must be ${min}–${max} mA.`);
+    return value;
+  }
+  function supportsCurrentLimit(bus) {
+    const type = bus.type & 127; // WLED uses the high bit for off refresh
+    return type >= 16 && type <= 39 || type >= 48 && type <= 63;
+  }
+  function readPowerSettings(led) {
+    const mode = $('ctPowerMode').value;
+    const maxpwr = mode === 'global' ? currentInput($('ctTotalPower'), 250, 65000, 'Total current limit') : 0;
+    const ins = led.ins.map((bus, i) => {
+      if (!supportsCurrentLimit(bus)) return bus;
+      if (mode === 'off') return { ...bus, maxpwr: 0 };
+      const row = $('ctGrid');
+      const limit = mode === 'output' ? currentInput(row.querySelector(`[data-abl="${i}"]`), 0, 65000, `Output ${i + 1} current limit`) : 0;
+      if (limit > 0 && limit < 250) throw new Error(`Output ${i + 1} current limit must be 0 or at least 250 mA.`);
+      const ledma = mode === 'output' && !limit ? 0 : currentInput(row.querySelector(`[data-ledma="${i}"]`), 1, 255, `Output ${i + 1} current per LED`);
+      return { ...bus, maxpwr: limit, ledma };
+    });
+    if (mode === 'global' && !ins.some(bus => supportsCurrentLimit(bus) && bus.ledma > 0)) throw new Error('Set the current per LED for at least one output to use the total limit.');
+    if (mode === 'output' && !ins.some(bus => supportsCurrentLimit(bus) && bus.maxpwr > 0)) throw new Error('Set a current limit for at least one output.');
+    return { maxpwr, ins };
+  }
+  function samePowerSettings(led, expected) {
+    return led?.maxpwr === expected.maxpwr && led.ins?.length === expected.ins.length && expected.ins.every((bus, i) => {
+      const actual = led.ins[i];
+      return actual.start === bus.start && actual.len === bus.len && actual.maxpwr === bus.maxpwr && actual.ledma === bus.ledma;
+    });
+  }
   function renderController() {
     const c = CT.cfg, ins = c.hw.led.ins || [], btn = (c.hw.btn?.ins || [])[0] || { macros: [0, 0, 0] }, ar = c.um?.AudioReactive || {}, nl = c.light?.nl || {};
     const sel = (id, v, opts) => '<select id="' + id + '">' + opts.map(([k, t]) => '<option value="' + k + '"' + (+k === +v ? ' selected' : '') + '>' + esc(t) + '</option>').join('') + '</select>';
-    const ablOn = ins.some(b => b.maxpwr > 0 && b.ledma > 0);
+    const mode = powerMode(c.hw.led);
     $('ctGrid').innerHTML =
       '<section class="schcard"><h3>💡 WLED output channels</h3><p class="sh">LED counts, color order, home photo, and traced channel paths are configured together.</p>' +
       ins.map((b, k) => '<div class="sl wide"><span>' + esc(PORT_NAME[k + 1] || 'Output ' + (k + 1)) + '</span><b>' + b.len + ' bulbs</b><span></span></div>').join('') +
       '<button type="button" class="btn" id="ctOpenWledSetup">Configure output counts &amp; roof layout</button></section>' +
       renderRoofSectionManager() +
-      '<section class="schcard"><h3>⚡ Power limit</h3><p class="sh">Each output caps its current by dimming bright looks. The controller estimates <b>' + (CT.info.leds?.pwr ?? '?') + ' mA</b> right now.</p>' +
-      '<label class="sw2"><input type="checkbox" id="ctAbl"' + (ablOn ? ' checked' : '') + '> Limit current per output</label>' +
-      ins.map((b, k) => '<div class="sl wide"><span>' + esc(PORT_NAME[k + 1] || 'Output ' + (k + 1)) + ' <small>(' + b.len + ' bulbs)</small></span><input type="number" min="200" max="10000" step="50" data-abl="' + k + '" value="' + (b.maxpwr || 850) + '"><span>mA</span></div>').join('') +
-      '<div class="sl wide"><span>Per bulb</span><input type="number" id="ctLedma" min="1" max="250" value="' + (ins[0]?.ledma || 55) + '"><span>mA at full white</span></div>' +
-      '<p class="sh">Set each output to what its power supply line can carry, and “per bulb” to your bulbs’ real full-white draw. With 55 mA per bulb (the default for 5 V strips) the roofline output dims bright looks a lot.</p></section>' +
+      '<section class="schcard"><h3>⚡ Power limit</h3><p class="sh">WLED estimates <b>' + (CT.info.leds?.pwr ?? '?') + ' mA</b> right now.</p>' +
+      '<label class="sl wide"><span>Limiter mode</span><select id="ctPowerMode"><option value="off">Off</option><option value="global">Whole controller</option><option value="output">Per output</option></select></label>' +
+      '<label class="sl wide" data-power-global><span>Total current limit</span><input type="number" id="ctTotalPower" min="250" max="65000" value="' + (c.hw.led.maxpwr || '') + '"><span>mA</span></label>' +
+      ins.map((b, k) => {
+        if (!supportsCurrentLimit(b)) return '';
+        const name = esc(PORT_NAME[k + 1] || 'Output ' + (k + 1));
+        return '<label class="sl wide" data-power-output><span>' + name + ' current limit</span><input type="number" min="0" max="65000" data-abl="' + k + '" value="' + (b.maxpwr ?? 0) + '"><span>mA (0 turns this limit off)</span></label>' +
+          '<label class="sl wide" data-power-led><span>' + name + ' per LED</span><input type="number" min="1" max="255" data-ledma="' + k + '" value="' + (b.ledma || '') + '"><span>mA at full white</span></label>';
+      }).join('') +
+      '<p class="sh">Use one total limit for a shared supply. Per-output limits apply separately. Set each limit for the supply and wiring that carry that load.</p></section>' +
       '<section class="schcard"><h3>🔘 Button on the controller</h3><p class="sh">The physical controller button, if your controller provides one.</p>' +
       '<div class="sl"><span>Press</span>' + sel('ctB0', btn.macros[0], BTN_ACTS()) + '<span></span></div>' +
       '<div class="sl"><span>Double</span>' + sel('ctB2', btn.macros[2], BTN_ACTS()) + '<span></span></div>' +
@@ -1823,6 +1864,16 @@
       if (!name || !Number.isInteger(start) || !Number.isInteger(stop) || start < 0 || stop > N || stop <= start) { toast('Enter a section name and a valid inclusive bulb range between 1 and ' + N, 'var(--warn)'); renderController(); return; }
       Object.assign(section, { name, start, stop }); APP.roofSections.sort((a, b) => a.start - b.start || a.stop - b.stop); save(['roofSections']); window.TLBuilder?.refreshZones(); renderController();
     });
+    const select = $('ctPowerMode');
+    select.value = mode;
+    const showPowerFields = () => {
+      $('ctGrid').querySelectorAll('[data-power-global],[data-power-output],[data-power-led]').forEach(row => {
+        row.style.display = (row.hasAttribute('data-power-global') ? select.value === 'global' : row.hasAttribute('data-power-output') ? select.value === 'output' : select.value !== 'off') ? '' : 'none';
+      });
+    };
+    select.onchange = showPowerFields;
+    showPowerFields();
+    $('ctGrid').querySelectorAll('#ctPowerMode,#ctTotalPower,[data-abl],[data-ledma]').forEach(input => { input.dataset.saved = input.value; });
     renderMoments();
   }
   /* ---- optional controller extension cards ---- */
@@ -1926,13 +1977,27 @@
   $('ctSave').onclick = async () => {
     if (!CT) return; const c = CT.cfg, btn = $('ctSave'); btn.disabled = true; $('ctStat').innerHTML = '<span class="aispin"></span>Saving…';
     try {
-      const on = $('ctAbl').checked, ledma = clamp(+$('ctLedma').value || 55, 1, 250);
-      const ins = c.hw.led.ins.map((b, k) => Object.assign({}, b, { maxpwr: on ? clamp(+document.querySelector('[data-abl="' + k + '"]').value || 850, 200, 10000) : 0, ledma: on ? ledma : 0 }));
-      const btns = clone(c.hw.btn); if (btns.ins?.[0]) btns.ins[0].macros = [+$('ctB0').value, +$('ctB1').value, +$('ctB2').value];
+      const powerFields = ['ctPowerMode', 'ctTotalPower'].map(id => $(id)).concat([...$('ctGrid').querySelectorAll('[data-abl],[data-ledma]')]);
+      const powerChanged = powerFields.some(input => input.value !== input.dataset.saved);
+      const expected = powerChanged ? readPowerSettings(c.hw.led) : null;
+      const current = await wget('/json/cfg');
+      if (expected && !samePowerSettings(current.hw?.led, c.hw.led)) throw new Error('WLED power or output settings changed. Reopen Controller to load the current values.');
+      if (expected) expected.ins = current.hw.led.ins.map((bus, i) => ({ ...bus, maxpwr: expected.ins[i].maxpwr, ledma: expected.ins[i].ledma }));
+      const btns = clone(current.hw.btn || {}); if (btns.ins?.[0]) btns.ins[0].macros = [+$('ctB0').value, +$('ctB1').value, +$('ctB2').value];
       const nlTbri = +$('ctNlEnd').value ? pct2bri(SC.nightBri) : 0;
-      await cfgPatch({ hw: { led: { ins }, btn: btns }, if: { va: { alexa: $('ctAlexa').checked } }, id: { inv: $('ctInv').value.trim() || 'Roof lights' },
+      await cfgPatch({ hw: { ...(expected && { led: expected }), btn: btns }, if: { va: { alexa: $('ctAlexa').checked } }, id: { inv: $('ctInv').value.trim() || 'Roof lights' },
         light: { nl: { dur: +$('ctNlDur').value, tbri: nlTbri, mode: +$('ctNlMode').value } },
-        um: { AudioReactive: { enabled: $('ctMic').checked, config: { gain: +$('ctGain').value, squelch: +$('ctSq').value } } } });
+        um: { AudioReactive: { enabled: $('ctMic').checked, config: { gain: +$('ctGain').value, squelch: +$('ctSq').value } } } }, { current, preserveBuses: !expected });
+      let savedConfig;
+      if (expected) {
+        for (let attempt = 0; attempt < 8; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 350));
+          savedConfig = await wget('/json/cfg').catch(() => null);
+          if (samePowerSettings(savedConfig?.hw?.led, expected)) break;
+        }
+        if (!samePowerSettings(savedConfig?.hw?.led, expected)) throw new Error('WLED did not report the requested power settings after saving.');
+        WL.ledConfig = savedConfig.hw.led;
+      }
       APP.sleepDefaults = { dur: +$('ctNlDur').value, tbri: nlTbri, mode: +$('ctNlMode').value }; save(['sleepDefaults']);
       const tls = tlsSettingsFromForm();
       if (tls) {
@@ -1940,12 +2005,14 @@
         APP.fade = { push: +$('tlsFadeP').value, sched: +$('tlsFadeS').value }; APP.tlsFx = tls; save(['fade', 'tlsFx']);
         for (const m of APP.moments) if (momDirty(m)) await writeMoment(m);
       }
-      $('ctStat').textContent = '✓ Saved on the controller (it restarts to apply output changes)'; toast('Controller settings saved');
-      CT.cfg = await wget('/json/cfg').catch(() => CT.cfg);
+      CT.cfg = savedConfig || await wget('/json/cfg').catch(() => current);
+      WL.ledConfig = CT.cfg.hw.led;
+      renderController();
+      $('ctStat').textContent = expected ? '✓ Power settings verified on WLED' : '✓ Saved on WLED'; toast('Controller settings saved');
     } catch (err) { $('ctStat').textContent = '⚠️ ' + err.message; }
     btn.disabled = false;
   };
-  $('ctWled').onclick = () => toast('In the real app this opens the controller’s own settings', 'var(--accent)');
+  $('ctWled').onclick = () => { if (window.TL_REAL_WLED && WL.host) window.open(`http://${WL.host}/settings/leds`, '_blank', 'noopener'); };
   $('ctWledSetup').onclick = () => { location.hash = 'wiring'; };
   document.querySelectorAll('[data-back]').forEach(b => b.onclick = () => goLibrary());
 
@@ -1994,7 +2061,7 @@
       const slot = Object.keys(APP.palSlots).find(s => APP.palSlots[s].key === stopsKey(st));
       return slot === undefined ? null : CPAL(+slot);
     },
-    fwLayers: hasStudioEffects, canPush, fwVer: () => WL.info?.ver || '', fps: () => WL.info?.leds?.fps,
+    fwLayers: hasStudioEffects, canPush, fwVer: () => WL.info?.ver || '', fps: () => WL.info?.leds?.fps, ledConfig: () => WL.ledConfig,
     toast, goLibrary, makeView: cv => makeView(cv, CROP_STAGE, 1, 2), drawHouse,
     saveLook({ id, name, desc, P, cats }) {
       const u = id && APP.userLooks.find(x => x.id === id);
@@ -2016,8 +2083,10 @@
     try {
       for (const [k, p] of [['fxdata', '/json/fxdata'], ['effects', '/json/effects'], ['palettes', '/json/palettes'], ['info', '/json/info']]) WL[k] = await wget(p);
       WL.state = await wget('/json/state');
+      const cfg = await wget('/json/cfg').catch(() => null);
+      WL.ledConfig = cfg?.hw?.led || null;
       if (HOME.lat == null || HOME.lon == null) {
-        const cfg = await wget('/json/cfg').catch(() => null), ntp = cfg?.if?.ntp;
+        const ntp = cfg?.if?.ntp;
         const lat = ntp?.lt == null ? NaN : Number(ntp.lt), lon = ntp?.ln == null ? NaN : Number(ntp.ln);
         if (Number.isFinite(lat) && Number.isFinite(lon)) { HOME.lat = lat; HOME.lon = lon; }
       }
