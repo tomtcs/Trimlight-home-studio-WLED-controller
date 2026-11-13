@@ -14,17 +14,18 @@ Use **Wiring &amp; setup → Backup &amp; restore** to download a versioned JSON
 
 ## Network requirements
 
-The app sends WLED JSON API requests and opens its WebSocket directly from the browser. WLED documents its [JSON API](https://kno.wled.ge/interfaces/json-api/) and [WebSocket API](https://kno.wled.ge/interfaces/websocket/). Use this app over HTTP on the same trusted LAN; WLED's WebSocket endpoint is unencrypted <code>ws://</code>, so browsers block it from HTTPS pages. WLED's API permits cross-origin requests; network isolation and controller access controls remain your responsibility.
+The app opens WLED's WebSocket directly from the browser and uses the Studio API to coordinate calendar and preset writes. WLED documents its [JSON API](https://kno.wled.ge/interfaces/json-api/) and [WebSocket API](https://kno.wled.ge/interfaces/websocket/). Use the app on a trusted LAN. To publish port 8080 on a specific host interface, set `STUDIO_BIND_ADDRESS` to its LAN IP in Compose’s `.env` file. Set it to `127.0.0.1` when a local proxy provides access.
 
 Never expose WLED's unauthenticated local API to the public internet. This app does not collect or store WLED credentials. Controllers requiring HTTP authentication are not supported by this browser client.
 
 ## Supported behavior and limits
 
-- Real mode reads the controller's effect metadata, palettes, state, and live WebSocket updates, and sends WLED state changes directly.
+- Real mode reads controller metadata, palettes, state, and live WebSocket updates. Push, schedule saves, and preset storage share the Studio API’s controller write lock.
 - The configurable house mapper stores multiple roof edges and ridges per photo and lets users mark individual links as wire-only. These elevation traces are mapping metadata; WLED channel capacity and reusable pattern bulb ranges are configured separately.
 - The Controller page exposes output counts and a named roof-section manager. In the Look Builder’s **Where** tab, select one or more saved ranges for a color layer; add another layer to paint a different selection another color. Saved ranges can also partition section looks.
 - Channel counts and color order can be applied to existing WLED output entries. The app does not configure GPIO pin assignments, LED type, power limits, Wi-Fi, or other hardware settings.
-- Basic nightly WLED timers and scheduled looks are written to WLED. The persistent API container also runs the date-range calendar scheduler: it uses the browser's local time zone, chooses the active program (latest-starting program wins), and updates the matching nightly or weekday preset while WLED timers continue to handle on, bedtime, and off events. Keep the API container running, and ensure it can reach the controller over the local network. The schedule page reports scheduler connection errors. AI generation and advanced layered effects still require their respective services or controller capabilities.
+- WLED runs the nightly on, bedtime, and off timers. The Docker API selects the date-range program in the installation’s saved time zone and updates the matching nightly or weekday preset. When programs overlap, the one that starts later wins. Use **Schedule → Calendar → Enable calendar scheduler** to pause or resume automatic calendar preset updates. The setting survives restarts, and WLED continues running its existing timers. **Save Schedule** still programs those timers. Studio firmware `16.0.1-tls5` stores presets without changing the live output and runs bedtime presets only while the lights are on. Earlier firmware can temporarily apply a preset while storing it. The scheduler checks for an existing match first and backs off on failure.
+- Mixed looks use standard WLED effects as the base, with Studio shapes layered above them.
 - Demo mode remains available and never sends commands to a physical controller.
 
 ## Source and licensing

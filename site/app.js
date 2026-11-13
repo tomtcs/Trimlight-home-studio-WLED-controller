@@ -7,10 +7,10 @@
   const CAT = window.TLCatalog, FXL = window.TLFX || null, TLB = window.TLBuilder;
   const isStack = P => !!(TLB && TLB.isStack(P));   // a Look Builder stack (builder.js)
   // Select the effect catalog according to the WLED compatibility version exposed by the engine.
-  const V16 = !!(FXL && /^16/.test(String(FXL.version || '')));
+  const previewPreGamma = !!(FXL && /^16/.test(String(FXL.version || '')));
   const controllerV16 = () => /^(?:0\.)?16(?:\.|$)/.test(String(WL.info?.ver || ''));
   const CPAL = slot => (controllerV16() ? 200 : 255) - slot;
-  if (V16 && FXL.config) { FXL.config.outputGamma = false; FXL.config.simFps = 250; }   // previews in display space (same as WLED 16's live view, which is pre-gamma)
+  if (previewPreGamma && FXL.config) { FXL.config.outputGamma = false; FXL.config.simFps = 250; }   // previews in display space (same as WLED 16's live view, which is pre-gamma)
   const clamp = (x, a, b) => x < a ? a : x > b ? b : x;
   const clone = o => JSON.parse(JSON.stringify(o));
   const hex = c => '#' + c.slice(0, 3).map(x => ('0' + Math.round(clamp(x, 0, 255)).toString(16)).slice(-2)).join('');
@@ -32,7 +32,7 @@
     for (let k = 0; k < r.leds; k++) {
       let d = (k + 0.5) / r.leds * tot, s = 0;
       while (s < seg.length - 1 && d > seg[s]) { d -= seg[s]; s++; }
-      const f = Math.min(1, d / seg[s]);
+      const f = seg[s] > 0 ? Math.min(1, d / seg[s]) : 0;
       arr.push([pts[s][0] + (pts[s + 1][0] - pts[s][0]) * f, pts[s][1] + (pts[s + 1][1] - pts[s][1]) * f]);
     }
     if (r.reverse) arr.reverse();
@@ -47,7 +47,7 @@
   const APP = Object.assign({ userLooks: [], edits: {}, cats: [], starred: {}, deletedLooks: [], roofSections: [], master: { speed: 100, bright: 100, spacing: 0, theme: '' }, perRow: 3, previewAnimations: true, lastPush: null, history: [] }, getSync('/api/app'));
   APP.roofSections = Array.isArray(APP.roofSections) ? APP.roofSections : [];
   let saveT = null; const pending = {};
-  function save(keys) { keys.forEach(k => pending[k] = APP[k]); clearTimeout(saveT); saveT = setTimeout(() => { const b = Object.assign({}, pending); for (const k in pending) delete pending[k]; fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).catch(() => toast('Couldn’t save', 'var(--warn)')); }, 300); }
+  function save(keys) { keys.forEach(k => pending[k] = APP[k]); clearTimeout(saveT); saveT = setTimeout(() => { const b = Object.assign({}, pending); for (const k in pending) delete pending[k]; fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); }).catch(() => toast('Couldn’t save', 'var(--warn)')); }, 300); }
 
   /* ---------------- looks: catalog + yours, with renames/categories applied ---------------- */
   const CAT_LABEL = {}; CAT.CATS.forEach(c => CAT_LABEL[c[0]] = c[1]); APP.cats.forEach(c => CAT_LABEL[c[0]] = c[1]);
@@ -95,7 +95,7 @@
     WL.ws.binaryType = 'arraybuffer';
     WL.ws.onopen = () => { WL.ws.send('{"lv":true}'); WL.ws.send(JSON.stringify({ time: Math.floor(Date.now() / 1000) })); syncController(); };  // keep the controller's clock right for the schedule
     WL.ws.onmessage = e => {
-      if (typeof e.data !== 'string') { const u = new Uint8Array(e.data); if (u[0] === 76) { const t = performance.now(); if (WL.frame) { WL.prevFrame = WL.frame; WL.gap = Math.min(150, Math.max(16, t - WL.frameAt)); } const px = u.subarray(u[1] === 2 ? 4 : 2); WL.frame = V16 ? px : px.map(v => UNGAMMA[v]); WL.frameAt = t; /* 0.15 live view is post-gamma: convert to screen space like the previews */ } return; }
+      if (typeof e.data !== 'string') { const u = new Uint8Array(e.data); if (u[0] === 76) { const t = performance.now(); if (WL.frame) { WL.prevFrame = WL.frame; WL.gap = Math.min(150, Math.max(16, t - WL.frameAt)); } const px = u.subarray(u[1] === 2 ? 4 : 2); WL.frame = controllerV16() ? px : px.map(v => UNGAMMA[v]); WL.frameAt = t; /* 0.15 live view is post-gamma: convert to screen space like the previews */ } return; }
       try { const j = JSON.parse(e.data); if (j.info) WL.info = j.info; if (j.state) { WL.state = j.state; onHouseChanged(); } syncController(); } catch { }
     };
     WL.ws.onclose = () => { syncController(); setTimeout(connectWS, 2500); };
@@ -132,19 +132,14 @@
   const prevPal = {}; let prevPalN = 1000;
   function previewPalId(st) { const k = stopsKey(st); if (!prevPal[k]) { prevPal[k] = prevPalN++; FXL && FXL.setCustomPalette(prevPal[k], st); } return prevPal[k]; }
   APP.palSlots = APP.palSlots || {};   // slot → {key, stops, up (uploaded key), at}
-  function pinnedKeys() {   // palettes that must never be evicted: the schedule's looks, what's on the roof (boot preset), the bedtime look
-    const b = [APP.schedule?.default?.body].concat((APP.schedule?.programs || []).map(p => p.body));
-    const keys = new Set(b.filter(Boolean).map(x => x._palKey).filter(Boolean));
-    const keyOf = P => { try { const q = P && effective(P); return q && q.cpal ? stopsKey(q.cpal) : null; } catch { return null; } };
-    [APP.lastPush?.P, APP.schedule?.nightMode === 'look' && BY_ID[APP.schedule?.nightLook] ? applyMaster(BY_ID[APP.schedule.nightLook].P) : null].forEach(P => { const k = keyOf(P); if (k) keys.add(k); });
-    return keys;
-  }
   function slotFor(st) {
     const k = stopsKey(st), S = APP.palSlots;
     for (const s in S) if (S[s].key === k) { S[s].at = Date.now(); return +s; }
-    const pin = pinnedKeys();
-    let slot = [...Array(10).keys()].find(s => !S[s]);
-    if (slot === undefined) slot = [...Array(10).keys()].filter(s => !pin.has(S[s].key)).sort((a, b) => S[a].at - S[b].at)[0] ?? 9;
+    const count = controllerV16() ? Math.min(129, WL.info?.cpalmax || 10) : 10;
+    const reserved = Math.max(0, Number(WL.info?.cpalcount) || 0);
+    const slots = Array.from({ length: count }, (_, i) => i);
+    const slot = slots.find(s => s >= reserved && !S[s]);
+    if (slot === undefined) throw new Error('No free WLED custom palette slot. Remove an unused palette or simplify the look.');
     S[slot] = { key: k, stops: st, up: null, at: Date.now() }; save(['palSlots']); return slot;
   }
   async function flushPalettes() {   // upload any assigned-but-not-uploaded palettes to the controller
@@ -154,8 +149,8 @@
       const fd = new FormData(); fd.append('data', new Blob([json], { type: 'application/json' }), 'palette' + s + '.json');
       await fetch(`http://${WL.host}/upload`, { method: 'POST', body: fd, mode: 'no-cors' });
       await new Promise(r => setTimeout(r, 400));
-      e.up = (await paletteOnController(s, e)) === false ? null : e.key; save(['palSlots']);
-      if (!e.up) toast('Couldn’t confirm the custom palette upload: colors may differ on the roof', 'var(--warn)');
+      e.up = (await paletteOnController(s, e)) === true ? e.key : null; save(['palSlots']);
+      if (!e.up) throw new Error('Could not verify WLED custom palette ' + s + '.');
     }
   }
   // read /paletteN.json back from the controller: true = matches, false = missing/different, null = couldn't check
@@ -172,7 +167,7 @@
     if (dirty) save(['palSlots']);
   }
   function segFor(P, k, extra) {
-    return Object.assign({ id: k, start: 0, stop: N, grp: 1, spc: P.spc || 0, of: 0, rev: !!P.rev, mi: !!P.mi, slow: P.slow || 1, on: true, bri: 255, fx: P.fx, sx: P.sx, ix: P.ix, c1: P.c1, c2: P.c2, c3: P.c3, o1: !!P.o1, o2: !!P.o2, o3: !!P.o3, pal: P.pal, col: P.col.map(c => c.slice(0, 3)), n: '' }, extra || {});
+    return Object.assign({ id: k, start: 0, stop: N, grp: 1, spc: P.spc || 0, of: 0, rev: !!P.rev, mi: !!P.mi, slow: P.slow || 1, on: true, bri: 255, fx: P.fx, sx: P.sx, ix: P.ix, c1: P.c1, c2: P.c2, c3: P.c3, o1: !!P.o1, o2: !!P.o2, o3: !!P.o3, pal: P.pal, col: P.col.map(c => c.slice(0, 3)), frz: false, n: '' }, extra || {});
   }
   // ---- sections: one look per part of the roof (P.parts = [{start, stop, look, dir 'n'|'r'|'m', speed ×}]) ----
   const isSec = P => !!(P && P.parts && P.parts.length);
@@ -218,10 +213,11 @@
     // Presets may run after a different look, so clear unused slots up to the controller's limit.
     const maxSegments = WL.info?.leds?.maxseg || 32;
     if (segs.length > maxSegments) throw new Error('This look needs ' + segs.length + ' segments. WLED supports ' + maxSegments + '.');
-    if (controllerV16()) segs = segs.map(s => {
+    if (controllerV16() || !hasStudioEffects()) segs = segs.map(s => {
       if (s.bm == null) return s;
-      const { bm, ...segment } = s;
-      return { ...segment, bm: 0, tlsbm: bm };
+      const { bm, fe, tlc, mod, ...segment } = s;
+      if (!hasStudioEffects()) return controllerV16() ? { ...segment, bm: 0 } : segment;
+      return { ...segment, bm: 0, tlsbm: bm, fe, tlc, mod };
     });
     for (let k = segs.length; k < maxSegments; k++) segs.push({ id: k, stop: 0 });
     const body = { on: true, bri: clamp(Math.round(P.bri), 1, 255), transition: clamp(Math.round((isStack(P) && P.fade != null ? P.fade : (APP.fade?.push ?? 2)) * 10), 0, 6000), pl: -1, lor: 0, mainseg: 0, seg: segs };
@@ -244,7 +240,12 @@
     const s = WL.state; if (!P || !s || !s.on) return false;
     const segs = (s.seg || []).filter(x => x.stop > x.start), g = segs[0]; if (!g) return false;
     const same = (a, b) => JSON.stringify(a.slice(0, 3).map(Math.round)) === JSON.stringify(b.slice(0, 3).map(Math.round));
-    if (isStack(P)) return TLB.matches(P, s.seg);
+    if (isStack(P)) return Math.round(P.bri) === s.bri && TLB.matches(P, s.seg, segmentMatches);
+    if (isSec(P) && P.parts.some(pt => isStack(partP(pt)))) {
+      const known = APP.lastPush?.state;
+      return !!known && sameP(P, APP.lastPush.P) && s.bri === known.bri && segs.length === known.seg.length &&
+        known.seg.every((seg, i) => segmentMatches(seg, segs[i]));
+    }
     if (isSec(P)) return segs.length === P.parts.length && P.parts.every((pt, k) => { const q = effective(partP(pt)), x = segs[k]; return x.start === pt.start && x.stop === pt.stop && x.fx === q.fx && x.sx === q.sx && x.ix === q.ix && !!x.rev === !!q.rev && !!x.mi === !!q.mi; });
     if (P.cmode === 'bulb') { const { L, segs: ss } = seqLayout(P); return segs.length === ss.length && segs.every((x, k) => x.fx === P.fx && x.sx === P.sx && x.ix === P.ix && x.start === ss[k].start && x.grp === ss[k].n && x.spc === L - ss[k].n && same(x.col[0], ss[k].c)); }
     const q = effective(P);
@@ -266,41 +267,53 @@
     return (WL.effects[s.seg?.[0]?.fx] || 'Custom') + (ps > 0 ? ' (preset)' : '') + ' · set outside the app';
   }
   function houseLookId() { if (houseMatchesLastPush()) return APP.lastPush.id; const rl = recognizedLook(); return rl ? rl.id : null; }
-  // WLED 16 resets unrelated settings (target fps, gamma, …) when /json/cfg gets a PARTIAL document (wled/WLED#5883),
-  // so always send the whole config with our change merged in, and re-assert the settings the looks depend on.
-  const CFG_KEEP = { hw: { led: { fps: 250 } }, light: { gc: { bri: 1, col: 2.8 } } };
   function deepMerge(a, b) { for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k]) && a[k] && typeof a[k] === 'object' && !Array.isArray(a[k])) deepMerge(a[k], b[k]); else a[k] = b[k]; } return a; }
-  async function cfgPatch(patch) {
-    const cur = await (await fetch(`http://${WL.host}/json/cfg`, { cache: 'no-store' })).json();
-    const doc = deepMerge(deepMerge(cur, patch), CFG_KEEP);
+  async function cfgPatch(patch, { preserveBuses = false } = {}) {
+    const cur = await wget('/json/cfg'), doc = deepMerge(clone(cur), patch);
+    if (JSON.stringify(cur) === JSON.stringify(doc)) return;
+    if (preserveBuses && doc.hw?.led) delete doc.hw.led.ins;
     const r = await fetch(`http://${WL.host}/json/cfg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) });
-    if (!r.ok) throw new Error('WLED returned HTTP ' + r.status + ' to the settings update.');
-    return r;
+    const result = await r.json().catch(() => null);
+    if (!r.ok || result?.success !== true) throw new Error('WLED rejected the settings update (HTTP ' + r.status + ').');
+  }
+  async function storePresets(presets) {
+    if (!presets.length) return;
+    const response = await fetch('/api/controller/presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ presets }) });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || result?.ok !== true) throw new Error(result?.error || 'Could not store WLED presets (HTTP ' + response.status + ').');
+  }
+  function segmentMatches(expected, actual) {
+    return Object.entries(expected).every(([key, value]) => {
+      if (value === undefined || key === 'n' || key === 'slow' && value === 1 && actual.slow == null) return true;
+      if (key === 'col') return value.every((c, i) => c.every((v, channel) => v === (actual.col?.[i]?.[channel] ?? 0)));
+      if (['bm', 'fe', 'tlc', 'mod'].includes(key) && actual[key] == null) return key === 'bm' && value === 0 || Array.isArray(value) && !value.length || value === 0;
+      if (key === 'c3') return Math.min(value, 31) === actual[key];
+      return JSON.stringify(value) === JSON.stringify(actual[key]);
+    });
   }
   async function pushToHouse(P, id, base) {   // P = exactly what the roof gets (gallery adjustments applied); base = the look's own settings
     if (!canPush(P)) throw new Error(WL.info ? 'This look uses layers or effects the controller does not advertise. Use one standard WLED effect layer, or add controller support for those features.' : 'The controller is offline.');
     const look = BY_ID[id];
-    const body = wledBody(P), before = await wget('/json/state'); await flushPalettes();
+    const body = wledBody(P); await flushPalettes();
     const expected = body.seg.filter(s => s.stop > s.start);
-    const stale = (before.seg || []).filter(s => s.stop > s.start && s.id >= expected.length).map(s => ({ id: s.id, stop: 0 }));
-    await wpost(Object.assign({}, body, { live: false, seg: expected.concat(stale) }), true);
-    const applied = await wget('/json/state'), actual = (applied.seg || []).filter(s => s.stop > s.start);
-    const segmentsMatch = expected.length === actual.length && expected.every(s => actual.some(a => s.id === a.id && s.start === a.start && s.stop === a.stop && s.fx === a.fx && (s.on !== false) === (a.on !== false)));
-    if (!applied.on || !segmentsMatch) throw new Error('WLED did not apply the requested segments (sent ' + expected.length + ', controller reports ' + actual.length + '). Check the controller response and LED output settings.');
+    const response = await fetch('/api/controller/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, seg: expected, name: 'Studio · ' + (look?.name || 'look') }) });
+    const result = await response.json().catch(() => null);
+    if (!response.ok || !result?.state) throw new Error(result?.error || 'Could not apply the look (HTTP ' + response.status + ').');
+    const applied = result.state, actual = (applied.seg || []).filter(s => s.stop > s.start);
+    const segmentsMatch = expected.length === actual.length && expected.every(s => actual.some(a => segmentMatches(s, a)));
+    if (!applied.on || applied.bri !== body.bri || !segmentsMatch) throw new Error('WLED did not apply the requested segments (sent ' + expected.length + ', controller reports ' + actual.length + '). Check the controller response and LED output settings.');
     WL.state = applied;
-    APP.lastPush = { id, name: look?.name, P: clone(P), base: clone(base || P), at: Date.now() };
+    APP.lastPush = { id, name: look?.name, P: clone(P), base: clone(base || P), state: { bri: applied.bri, seg: expected }, at: Date.now() };
     APP.history = [id].concat((APP.history || []).filter(x => x !== id)).slice(0, 8);
     save(['lastPush', 'history']);
     onHouseChanged();
     refreshScheduleBodies();
-    // keep it after a power blip: save as preset 3 and make that the boot look
-    try { await wpost({ psave: 3, n: 'Studio · ' + (look?.name || 'look'), ib: true, sb: true, bootps: 3 }, true); }
-    catch (error) { toast('Look applied. Could not save the WLED boot preset: ' + error.message, 'var(--warn)'); }
+    if (result.bootWarning) toast('Look applied. Could not save the WLED boot preset: ' + result.bootWarning, 'var(--warn)');
   }
 
   /* ---------------- preview engine ---------------- */
   const UNGAMMA = new Uint8Array(256).map((_, v) => Math.round(255 * Math.pow(v / 255, 1 / 2.8)));
-  const DISP = V16 ? new Uint8Array(256).map((_, v) => v) : UNGAMMA;   // engine output → screen (WLED 16 engine already gives display space)
+  const DISP = previewPreGamma ? new Uint8Array(256).map((_, v) => v) : UNGAMMA;   // engine output → screen (WLED 16 engine already gives display space)
   function fakeAudio(t) { // a 120 bpm "song" for mic-reactive previews
     const beat = (t * 2) % 1, v = Math.round(60 + 170 * Math.pow(1 - beat, 3) + 25 * Math.sin(t * 7.3));
     const fft = new Uint8Array(16); for (let i = 0; i < 16; i++) fft[i] = clamp(Math.round(v * (1 - i / 22) * (0.6 + 0.4 * Math.sin(t * (1 + i * 0.37) + i))), 0, 255);
@@ -348,7 +361,7 @@
       // the colour your eye sees on the roof — same space as the controller's live view
       const raw = v.inst.render({ sx: P.sx, ix: P.ix, c1: P.c1, c2: P.c2, c3: P.c3, o1: P.o1, o2: P.o2, o3: P.o3, pal: P.pal, col: P.col, grp: 1, spc: P.spc || 0, rev: !!P.rev, mi: !!P.mi, slow: P.slow || 1, bri: 255, audio: meta.audio ? fakeAudio(nowMs / 1000) : undefined }, nowMs);
       const d = v.dbuf || (v.dbuf = new Uint8Array(N * 3));
-      if (V16) d.set(raw); else for (let i = 0; i < N * 3; i++) d[i] = UNGAMMA[raw[i]];
+      if (previewPreGamma) d.set(raw); else for (let i = 0; i < N * 3; i++) d[i] = UNGAMMA[raw[i]];
       return d;
     }
     const b = v.pbuf || (v.pbuf = new Uint8Array(N * 3)), c = P.col[0];   // engine missing: show colour 1
@@ -362,7 +375,7 @@
     const meta = fxMeta(q.fx);
     const raw = v.inst.render({ sx: q.sx, ix: q.ix, c1: q.c1, c2: q.c2, c3: q.c3, o1: q.o1, o2: q.o2, o3: q.o3, pal: q.pal, col: q.col, grp: 1, spc: q.spc || 0, rev: !!q.rev, mi: !!q.mi, slow: q.slow || 1, bri: 255, audio: meta.audio ? fakeAudio(nowMs / 1000) : undefined }, nowMs);
     const d = v.db || (v.db = new Uint8Array(len * 3));
-    if (V16) d.set(raw); else for (let i = 0; i < len * 3; i++) d[i] = UNGAMMA[raw[i]];
+    if (previewPreGamma) d.set(raw); else for (let i = 0; i < len * 3; i++) d[i] = UNGAMMA[raw[i]];
     return d;
   }
   function liveBuf() { // what the roof is showing right now (controller live view, in WLED order)
@@ -445,7 +458,7 @@
     const t = WL.state?.tls || APP.tlsFx; TN.on = false; if (!t || !FXL) return;
     let p = 0; const d = t.drift;
     if (d && d.on) {
-      const now = new Date(), mins = now.getHours() * 60 + now.getMinutes(), ss = sunTimes(now).set, st = d.st >= 1440 ? (t.sunset ?? ss.getHours() * 60 + ss.getMinutes()) : d.st % 1440, en = d.en % 1440;
+      const now = new Date(), mins = now.getHours() * 60 + now.getMinutes(), ss = sunTimes(now).set, st = d.st >= 1440 ? (t.sunset ?? (ss ? ss.getHours() * 60 + ss.getMinutes() : 1080)) : d.st % 1440, en = d.en % 1440;
       let len = (en - st + 1440) % 1440 || 1440; const into = (mins - st + 1440) % 1440;
       if (into <= len) p = into / len; else { const since = (mins - en + 1440) % 1440, hold = (360 - en + 1440) % 1440; p = since <= hold ? 1 : 0; }
     }
@@ -816,7 +829,7 @@
   function visibleColors(P) {   // the colors a look actually shows: its swatches, its own colors (no black background), or samples of its palette
     if (P.cmode === 'bulb') return P.seq.filter(e => e.c).map(e => e.c.slice());
     if (P.mycol && P.colors?.length) return P.colors.map(c => c.slice());
-    if (usesPal(P.fx) && (P.pal >= 6 || P.pal === 0) && FXL) { const pr = FXL.paletteRGB(P.pal, P.col, P.fx); return [0, 5, 10].map(k => [pr[k * 3], pr[k * 3 + 1], pr[k * 3 + 2]].map(v => V16 ? v : UNGAMMA[v])); }
+    if (usesPal(P.fx) && (P.pal >= 6 || P.pal === 0) && FXL) { const pr = FXL.paletteRGB(P.pal, P.col, P.fx); return [0, 5, 10].map(k => [pr[k * 3], pr[k * 3 + 1], pr[k * 3 + 2]].map(v => previewPreGamma ? v : UNGAMMA[v])); }
     const cs = P.col.slice(0, usesPal(P.fx) && P.pal === 2 ? 1 : 3).filter(c => Math.max(...c) > 20).map(c => c.slice());
     return cs.length ? cs : [[255, 80, 0]];
   }
@@ -1033,6 +1046,7 @@
   function renameLook(id, name) {
     name = String(name || '').trim(); const l = BY_ID[id]; if (!l || !name || name === l.name) return;
     l.name = name; const u = APP.userLooks.find(x => x.id === id); if (u) { u.name = name; save(['userLooks']); } else { editOf(id).name = name; save(['edits']); }
+    refreshScheduleBodies();
     if (state.edit?.id === id) { $('eName').textContent = name; $('fsName').textContent = name; $('pTitle').textContent = 'Tune ' + name; }
     renderGallery(true); onHouseChanged();
   }
@@ -1114,7 +1128,7 @@
   $('pushBtn').addEventListener('click', doPush); $('fsPush').addEventListener('click', doPush);
   $('saveBtn').addEventListener('click', () => {
     const e = state.edit, look = BY_ID[e.id];
-    if (look.custom) { const u = APP.userLooks.find(x => x.id === look.id); u.P = clone(e.P); look.P = clone(e.P); save(['userLooks']); renderGallery(true); return toast('Saved changes to ' + look.name, 'var(--accent)'); }
+    if (look.custom) { const u = APP.userLooks.find(x => x.id === look.id); u.P = clone(e.P); look.P = clone(e.P); save(['userLooks']); refreshScheduleBodies(); renderGallery(true); return toast('Saved changes to ' + look.name, 'var(--accent)'); }
     const id = 'mine-' + Date.now().toString(36), nm = look.name + ' · mine';
     APP.userLooks.unshift({ id, base: look.id, name: nm, cats: ['mine'].concat(look.cats.filter(c => c !== 'mine')), desc: 'Your take on ' + look.name, P: clone(e.P) });
     save(['userLooks']); buildLooks();
@@ -1191,19 +1205,25 @@
 
   /* ======================= 🌙 schedule (controller timers do WHEN; the Studio server loads WHAT into preset 240) ======================= */
   const LOCATION = window.TLSettings.read(), HOME = { lat: LOCATION.lat == null ? null : Number(LOCATION.lat), lon: LOCATION.lon == null ? null : Number(LOCATION.lon) };
-  const PS_TONIGHT = 240, PS_NIGHT = 241, PS_OFF = 242, PS_MORNING = 243, PS_WEEKDAY = 244;
+  const PS_TONIGHT = 240, PS_NIGHT = 241, PS_OFF = 242, PS_WEEKDAY = 244;
   const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
   // WLED counts Monday as bit 0 and Sunday as bit 6.
   const DOW_BITS = [64, 1, 2, 4, 8, 16, 32];
+  let persistedSchedule = clone((window.TL_SERVER_STATE ? window.TL_SERVER_STATE.app?.schedule : APP.schedule) ?? null);
   APP.schedule = Object.assign({ onMode: 'sunset', onOffset: 0, onTime: '17:00', eveLook: 'current', nightOn: true, nightTime: '21:30', nightTimeWE: '21:30', nightMode: 'dim', nightLook: 'porch-glow-twinkle', nightBri: 10, nightFade: 5, offMode: 'sunrise', offTime: '01:00', programs: [] }, APP.schedule || {});
   const SC = APP.schedule; SC.programs = SC.programs || []; SC.weeklyLooks = SC.weeklyLooks || {};
   if (!SC.nightTimeWE) SC.nightTimeWE = SC.nightTime;
   // the controller gamma-corrects brightness (cfg light.gc.bri), so a raw 26 is far below 10% of the light; map % of light output to the slider value
   const pct2bri = p => clamp(Math.round(255 * Math.pow(clamp(p, 0, 100) / 100, 1 / 2.8)), 1, 255);
-  const fmt12 = hhmm => { const [h, m] = hhmm.split(':').map(Number); return ((h + 11) % 12 + 1) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM'); };
-  const toHM = d => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  const fmt12 = hhmm => { if (!hhmm) return '—'; const [h, m] = hhmm.split(':').map(Number); return ((h + 11) % 12 + 1) + ':' + String(m).padStart(2, '0') + (h < 12 ? ' AM' : ' PM'); };
+  const toHM = d => {
+    if (!d || !Number.isFinite(d.getTime())) return null;
+    const timezone = SC.timezone || LOCATION.timezone;
+    return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: timezone || undefined }).format(d);
+  };
   // NOAA-style sunrise/sunset (good to a minute or two)
   function sunTimes(date) {
+    if (!Number.isFinite(HOME.lat) || !Number.isFinite(HOME.lon) || HOME.lat === 0 && HOME.lon === 0) return { rise: null, set: null };
     const rad = Math.PI / 180, day = Math.floor((Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) - Date.UTC(date.getFullYear(), 0, 0)) / 864e5);
     const g = 2 * Math.PI / 365 * (day - 1), eq = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g) - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));
     const dec = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g) + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);
@@ -1218,7 +1238,8 @@
   const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   function nthWeekday(y, m, wd, n) { const d = new Date(y, m, 1); while (d.getDay() !== wd) d.setDate(d.getDate() + 1); d.setDate(d.getDate() + 7 * (n - 1)); return d; }
   function quickPrograms() {
-    const now = new Date(), y = now.getMonth() >= 10 ? now.getFullYear() : now.getFullYear(), tg = nthWeekday(y, 10, 4, 4);
+    const now = new Date(), y = now.getFullYear(), tg = nthWeekday(y, 10, 4, 4);
+    const upcoming = (month, day) => new Date(new Date(y, month, day, 23, 59) < now ? y + 1 : y, month, day);
     const add = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
     return [
       ['Thanksgiving week', iso(add(tg, -3)), iso(add(tg, 3)), 'thanksgiving-table'],
@@ -1227,9 +1248,9 @@
       ['Christmas Eve & Day', iso(new Date(y, 11, 24)), iso(new Date(y, 11, 25)), 'christmas-twinkle'],
       ['Hanukkah', y === 2026 ? '2026-12-04' : iso(new Date(y, 11, 14)), y === 2026 ? '2026-12-12' : iso(new Date(y, 11, 22)), 'hanukkah-shimmer'],
       ['New Year’s Eve', iso(new Date(y, 11, 31)), iso(new Date(y + 1, 0, 1)), 'fireworks'],
-      ['Valentine’s', iso(new Date(y + 1, 1, 14)), iso(new Date(y + 1, 1, 14)), 'valentine-glow'],
-      ['Fourth of July', iso(new Date(y + 1, 6, 4)), iso(new Date(y + 1, 6, 4)), 'fourth-of-july'],
-      ['Halloween week', iso(new Date(y + 1, 9, 25)), iso(new Date(y + 1, 9, 31)), 'halloween-flicker'],
+      ['Valentine’s', iso(upcoming(1, 14)), iso(upcoming(1, 14)), 'valentine-glow'],
+      ['Fourth of July', iso(upcoming(6, 4)), iso(upcoming(6, 4)), 'fourth-of-july'],
+      ['Halloween week', iso(add(upcoming(9, 31), -6)), iso(upcoming(9, 31)), 'halloween-flicker'],
     ];
   }
   function renderPrograms() {
@@ -1266,7 +1287,7 @@
     const v = n => (document.querySelector('input[name=' + n + ']:checked') || {}).value;
     Object.assign(SC, { onMode: v('onMode'), onOffset: clamp(+$('onOffset').value || 0, -59, 59), onTime: $('onTime').value || '17:00', eveLook: $('eveLook').value, nightOn: $('nightOn').checked, nightTime: $('nightTime').value || '21:30', nightTimeWE: $('nightTimeWE').value || $('nightTime').value || '21:30', nightMode: v('nightMode'), nightLook: $('nightLook').value, nightBri: +$('nightBri').value, nightFade: +$('nightFade').value, offMode: v('offMode'), offTime: $('offTime').value || '01:00' });
     SC.weeklyLooks = Object.fromEntries([...document.querySelectorAll('#weeklyLooks [data-weekday]')].filter(sel => sel.value).map(sel => [sel.dataset.weekday, sel.value]));
-    SC.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    SC.timezone = LOCATION.timezone || SC.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   }
   $('schedule').addEventListener('input', e => {
     if (e.target.id === 'nightBri') $('nightBriO').textContent = e.target.value + '%';
@@ -1288,19 +1309,21 @@
   }
   let vTonight = null, schedulerStatusTimer = null;
   function refreshNights() {
-    const today = new Date(); today.setHours(12, 0, 0, 0);
+    const parts = new Intl.DateTimeFormat('en-CA', { timeZone: SC.timezone || LOCATION.timezone || undefined, year: 'numeric', month: 'numeric', day: 'numeric' }).formatToParts();
+    const { year, month, day } = Object.fromEntries(parts.map(({ type, value }) => [type, Number(value)]));
+    const today = new Date(year, month - 1, day, 12), nextDate = new Date(year, month - 1, day + 1, 12);
     const cards = [];
     for (let i = 0; i < 21; i++) {
       const d = new Date(today); d.setDate(d.getDate() + i);
       const n = nightFor(d), l = BY_ID[n.look], st = sunTimes(d);
-      cards.push('<div class="nt' + (i === 0 ? ' today' : '') + '" data-weekday-card="' + d.getDay() + '" tabindex="0" role="button" title="Edit the ' + WEEKDAYS[d.getDay()] + ' schedule"><small>' + (i === 0 ? 'Tonight' : d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })) + '</small><b>' + esc(l ? l.name : (nameOf(n.look) || '—')) + '</b><div class="sw">' + (l ? swatchesOf(l.P).map(c => '<i style="background:' + hex(c) + '"></i>').join('') : '') + '</div><em class="' + n.src + '">' + esc(n.why) + '</em><small>' + (SC.onMode === 'sunset' ? fmt12(toHM(new Date(st.set.getTime() + SC.onOffset * 6e4))) : SC.onMode === 'time' ? fmt12(SC.onTime) : '—') + (SC.nightOn ? ' · 🌙 ' + fmt12(nightKey(d)) : '') + '</small></div>');
+      cards.push('<div class="nt' + (i === 0 ? ' today' : '') + '" data-weekday-card="' + d.getDay() + '" tabindex="0" role="button" title="Edit the ' + WEEKDAYS[d.getDay()] + ' schedule"><small>' + (i === 0 ? 'Tonight' : d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })) + '</small><b>' + esc(l ? l.name : (nameOf(n.look) || '—')) + '</b><div class="sw">' + (l ? swatchesOf(l.P).map(c => '<i style="background:' + hex(c) + '"></i>').join('') : '') + '</div><em class="' + n.src + '">' + esc(n.why) + '</em><small>' + (SC.onMode === 'sunset' ? fmt12(toHM(st.set && new Date(st.set.getTime() + SC.onOffset * 6e4))) : SC.onMode === 'time' ? fmt12(SC.onTime) : '—') + (SC.nightOn ? ' · 🌙 ' + fmt12(nightKey(d)) : '') + '</small></div>');
     }
     $('nights').innerHTML = cards.join('');
     // tonight panel
-    const n = nightFor(today), l = BY_ID[n.look], st = sunTimes(new Date()), tomorrow = sunTimes(new Date(Date.now() + 864e5));
+    const n = nightFor(today), l = BY_ID[n.look], st = sunTimes(today), tomorrow = sunTimes(nextDate);
     $('tName').textContent = l ? l.name : (nameOf(n.look) || '—'); $('tWhy').textContent = n.src === 'default' ? 'Tonight · usual look' : 'Tonight · ' + n.why;
     vTonight.P = l ? applyMaster(l.P) : null;
-    const onAt = SC.onMode === 'sunset' ? toHM(new Date(st.set.getTime() + SC.onOffset * 6e4)) : SC.onMode === 'time' ? SC.onTime : null;
+    const onAt = SC.onMode === 'sunset' ? toHM(st.set && new Date(st.set.getTime() + SC.onOffset * 6e4)) : SC.onMode === 'time' ? SC.onTime : null;
     const rows = [];
     if (onAt) rows.push([fmt12(onAt), '#62d682', 'On' + (SC.onMode === 'sunset' ? ' at sunset' + (SC.onOffset ? ' ' + (SC.onOffset > 0 ? '+' : '') + SC.onOffset + ' min' : '') : '') + ' · ' + (l ? l.name : 'look')]);
     if (SC.nightOn) rows.push([fmt12(nightKey(today)), '#7a8cff', (SC.nightMode === 'dim' ? 'Dims to ' + SC.nightBri + '%' : 'Switches to ' + (BY_ID[SC.nightLook]?.name || 'a calmer look') + ' at ' + SC.nightBri + '%') + (SC.nightFade ? ' over ' + SC.nightFade + ' min' : '')]);
@@ -1317,24 +1340,55 @@
   }
   $('nights').addEventListener('click', e => { const c = e.target.closest('[data-weekday-card]'); if (c) editWeekday(+c.dataset.weekdayCard); });
   $('nights').addEventListener('keydown', e => { const c = e.target.closest('[data-weekday-card]'); if (c && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); editWeekday(+c.dataset.weekdayCard); } });
+  let changingScheduler = false, schedulerRequest = 0;
+  function showSchedulerStatus(status) {
+    const toggle = $('schedulerEnabled'), message = $('schedulerStatus');
+    toggle.checked = status.enabled === true;
+    toggle.disabled = !window.TL_REAL_WLED || changingScheduler || !status.controllerConfigured;
+    message.classList.toggle('error', status.state === 'error');
+    message.textContent = status.message || 'Calendar scheduler ready.';
+  }
   async function refreshSchedulerStatus() {
-    const el = $('schedulerStatus'); if (!el) return;
-    el.classList.remove('error');
-    if (!window.TL_REAL_WLED) { el.textContent = 'Demo mode: calendar programs are previewed here but are not sent to a controller.'; return; }
-    el.textContent = 'Checking the Docker API scheduler…';
+    const toggle = $('schedulerEnabled'), message = $('schedulerStatus');
+    if (changingScheduler) return;
+    if (!window.TL_REAL_WLED) {
+      toggle.disabled = true;
+      message.textContent = 'Demo mode previews calendar programs.';
+      return;
+    }
+    const request = ++schedulerRequest;
     try {
       const response = await fetch('/api/scheduler/status', { cache: 'no-store' });
-      if (!response.ok) throw new Error('The scheduler status endpoint is unavailable. Rebuild the API container from the latest repository version.');
+      if (!response.ok) throw new Error('Could not read the calendar scheduler status.');
       const status = await response.json();
-      if (!status.enabled) {
-        el.textContent = status.settingsMode !== 'wled' ? 'The API container has ' + (status.settingsMode === 'demo' ? 'Demo' : 'no') + ' controller settings while this browser is in WLED mode. Re-save Real WLED mode in Wiring & setup.' : (status.message || 'Save a WLED controller address in Wiring & setup.');
-        el.classList.add('error'); return;
-      }
-      if (status.state === 'error') { el.textContent = 'Scheduler error: ' + (status.message || 'The API container could not reach WLED.'); el.classList.add('error'); return; }
-      const running = status.state === 'starting' ? 'Starting' : status.state === 'active' ? 'Running date-range program' : 'Ready';
-      el.textContent = 'Calendar scheduler ' + running + (status.message ? ' · ' + status.message : '') + (SC.programs.some(p => p.on !== false) ? '' : ' · No date-range programs yet; add one below and save the schedule.');
-    } catch (error) { el.textContent = error.message || 'Could not read calendar scheduler status.'; el.classList.add('error'); }
+      if (request === schedulerRequest) showSchedulerStatus(status);
+    } catch (error) {
+      if (request !== schedulerRequest) return;
+      toggle.disabled = true;
+      message.textContent = error.message;
+      message.classList.add('error');
+    }
   }
+  $('schedulerEnabled').addEventListener('change', async event => {
+    const toggle = event.currentTarget, enabled = toggle.checked;
+    changingScheduler = true;
+    ++schedulerRequest;
+    toggle.disabled = true;
+    $('schedulerStatus').textContent = enabled ? 'Resuming calendar updates…' : 'Pausing calendar updates…';
+    try {
+      const response = await fetch('/api/scheduler/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not change the scheduler setting.');
+      changingScheduler = false;
+      showSchedulerStatus(result);
+    } catch (error) {
+      changingScheduler = false;
+      toggle.checked = !enabled;
+      toggle.disabled = false;
+      $('schedulerStatus').textContent = error.message;
+      $('schedulerStatus').classList.add('error');
+    }
+  });
   async function openSchedule() {
     showRoute('schedule'); history.replaceState(null, '', location.href.split('#')[0] + '#schedule');
     if (!vTonight) vTonight = makeView($('tonightCv'), CROP_CARD, 1.4, 2);
@@ -1353,10 +1407,14 @@
     } catch { $('clockInfo').textContent = ''; }
   }
   $('schBack').onclick = () => goLibrary();
-  function bedtimeBody() {
-    const tt = SC.nightFade * 600;                     // WLED transition is in 100 ms steps
-    if (SC.nightMode === 'look' && BY_ID[SC.nightLook]) return Object.assign(wledBody(applyMaster(BY_ID[SC.nightLook].P)), { bri: pct2bri(SC.nightBri), transition: tt });
-    return { on: true, bri: pct2bri(SC.nightBri), transition: tt };
+  function bedtimeBody(schedule = SC) {
+    const tt = schedule.nightFade * 600;                     // WLED transition is in 100 ms steps
+    if (schedule.nightMode === 'look' && BY_ID[schedule.nightLook]) {
+      const body = wledBody(applyMaster(BY_ID[schedule.nightLook].P));
+      delete body.on;
+      return { ...body, ifon: true, bri: pct2bri(schedule.nightBri), transition: tt };
+    }
+    return { ifon: true, bri: pct2bri(schedule.nightBri), transition: tt };
   }
   const hm = s => s.split(':').map(Number);
   $('schSave').onclick = async () => {
@@ -1374,71 +1432,38 @@
       const invalidProgram = SC.programs.find(p => p.on !== false && (!p.body || !p.start || !p.end || p.end < p.start));
       if (invalidProgram) throw new Error('Choose an available look and valid dates for ' + invalidProgram.name + '.');
       if (SC.nightOn && SC.nightMode === 'look' && !BY_ID[SC.nightLook]) throw new Error('Choose an available bedtime look.');
-      const before = await wget('/json/state'), pause = ms => new Promise(r => setTimeout(r, ms));
-      await flushPalettes();   // custom palettes used by scheduled looks
-      try {
-        for (const id of new Set([SC.eveLook, ...SC.programs.map(p => p.look)].filter(plName))) { const pl = plById(id.slice(3)); if (pl) await writePlaylist(pl); }
-        for (const [dow, id] of weeklyEntries) {
-          const b = bodyOf(id); if (!b) throw new Error('The selected ' + WEEKDAYS[+dow] + ' look is no longer available.');
-          delete b._palKey;
-          await wpost(Object.assign({}, b, { psave: PS_WEEKDAY + +dow, n: 'Schedule · ' + WEEKDAYS[+dow] + ' · ' + nameOf(id), ib: true, sb: true, o: true }), true);
-          await pause(450);
-        }
-        const ntp = { en: true };
-        if (Number.isFinite(HOME.lat) && Number.isFinite(HOME.lon)) { ntp.ln = HOME.lon; ntp.lt = HOME.lat; }
-        await cfgPatch({ if: { ntp } });
-        await wpost({ time: Math.floor(Date.now() / 1000) }, true); await pause(600);
-        // bedtime + off are stored commands ("o": true); WLED runs each as it saves it, so we restore afterwards
-        if (SC.nightOn) { await wpost(Object.assign(bedtimeBody(), { psave: PS_NIGHT, n: 'Schedule · Bedtime', o: true }), true); await pause(1000); }
-        await wpost({ on: false, transition: 50, psave: PS_OFF, n: 'Schedule · Off', o: true }, true); await pause(1000);
-        // timers: regular first, then sunrise (hour 255), then sunset (hour 254: WLED 16 marks sunset this way; 0.15 told them apart by order)
-        const ins = [], T = (t, macro, dow) => { const [h, m] = hm(t); ins.push({ en: 1, hour: h, min: m, macro, dow }); };
-        if (SC.onMode === 'time' && usualDaysMask) T(SC.onTime, PS_TONIGHT, usualDaysMask);
-        if (weeklyEntries.length && SC.onMode === 'time') weeklyEntries.forEach(([dow]) => T(SC.onTime, PS_WEEKDAY + +dow, DOW_BITS[+dow]));
-        if (SC.nightOn) { if (SC.nightTime === SC.nightTimeWE) T(SC.nightTime, PS_NIGHT, 127); else { T(SC.nightTime, PS_NIGHT, 79); T(SC.nightTimeWE, PS_NIGHT, 48); } }   // Sun–Thu / Fri–Sat
-        if (SC.offMode === 'time') T(SC.offTime, PS_OFF, 127);
-        const reapply = [];
-        if (SC.nightOn) {   // re-apply bedtime every hour overnight, so a restart or WiFi drop (boot = full look) snaps back within the hour
-          const nt = t => { const [h, m] = hm(t); return ((h * 60 + m) - 720 + 1440) % 1440; };   // minutes since noon
-          const bed = [SC.nightTime, SC.nightTimeWE].map(nt).sort((a, b) => b - a)[0], end = nt(SC.offMode === 'time' ? SC.offTime : '05:00'), [, bm] = hm(SC.nightTime);
-          for (let h = 0; h < 24; h++) { const t = ((h * 60 + bm) - 720 + 1440) % 1440; if (t > bed && t < end) reapply.push({ en: 1, hour: h, min: bm, macro: PS_NIGHT, dow: 127 }); }
-        }
-        reapply.sort((a, b) => ((a.hour + 12) % 24) - ((b.hour + 12) % 24));
-        const solar = [];
-        if (!modern || SC.offMode === 'sunrise') solar.push({ en: SC.offMode === 'sunrise' ? 1 : 0, hour: 255, min: 0, macro: SC.offMode === 'sunrise' ? PS_OFF : 0, dow: 127 });
-        if (SC.onMode === 'sunset' && usualDaysMask) solar.push({ en: 1, hour: modern ? 254 : 255, min: SC.onOffset, macro: PS_TONIGHT, dow: usualDaysMask });
-        if (weeklyEntries.length && SC.onMode === 'sunset') weeklyEntries.forEach(([dow]) => solar.push({ en: 1, hour: 254, min: SC.onOffset, macro: PS_WEEKDAY + +dow, dow: DOW_BITS[+dow] }));
-        if (!modern && SC.onMode !== 'sunset') solar.push({ en: 0, hour: 255, min: 0, macro: 0, dow: 127 });
-        const maxTimers = modern ? 64 : 8, essential = ins.length + (modern ? solar.length : 0), spare = maxTimers - essential;
-        if (spare < 0) throw new Error('This schedule needs ' + essential + ' timer slots, but this controller supports ' + maxTimers + ' for these events. Reduce weekday overrides or disable an automatic event.');
-        ins.push(...reapply.slice(0, spare));
-        if (!modern) {
-          while (ins.length < maxTimers) ins.push({ en: 0, hour: 0, min: 0, macro: 0, dow: 0 });
-        }
-        ins.push(...solar);
-        await cfgPatch({ timers: { ins } });
-        await pause(800);
-        const config = await wget('/json/cfg');
-        const timerKey = t => [t.hour, t.min, t.macro, t.dow].join(',');
-        const expected = ins.filter(t => t.en).map(timerKey).sort();
-        const actual = (config.timers?.ins || []).filter(t => t.en && t.macro).map(timerKey).sort();
-        if (JSON.stringify(expected) !== JSON.stringify(actual)) throw new Error('WLED did not retain the requested timers. Check the controller schedule.');
-      } finally {
-        const seg = before.seg || [], restoredIds = new Set(seg.map(s => s.id));
-        const extra = ((await wget('/json/state')).seg || []).filter(s => !restoredIds.has(s.id)).map(s => ({ id: s.id, stop: 0 }));
-        await wpost({ on: before.on, bri: before.bri, transition: before.transition ?? 0, tt: 0, mainseg: before.mainseg, seg: seg.concat(extra) }, true);
+      const presets = [...SC.auxiliaryPresets];
+      for (const [dow, id] of weeklyEntries) {
+        presets.push({ slot: PS_WEEKDAY + +dow, name: 'Studio · ' + nameOf(id), body: SC.weeklyBodies[dow].body });
       }
-      const saved = await fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: SC }) });
-      if (!saved.ok) throw new Error('The Studio API could not save the schedule.');
-      savedSchedule = clone(SC);
-      // tonight's look → preset 240 (the server does this every day; force it now)
-      const now = new Date(), tonight = nightFor(now), dow = now.getDay();
-      const slot = SC.weeklyBodies[dow]?.body ? PS_WEEKDAY + dow : PS_TONIGHT;
-      const body = tonight.src === 'default' ? SC.default.body : bodyOf(tonight.look);
-      const ap = await fetch('/api/schedule/apply', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ body, slot, name: nameOf(tonight.look) || tonight.why }) }).then(r => r.json());
-      if (!ap.ok) throw new Error(ap.error || 'WLED did not save tonight’s preset.');
-      const c = await wget('/json/cfg'), n = (c.timers?.ins || []).filter(t => t.en && t.macro).length;
-      $('schStat').textContent = '✓ Saved · ' + n + ' timers · tonight: ' + (ap.tonight || '');
+      if (SC.onMode !== 'none' && SC.default.body) presets.push({ slot: PS_TONIGHT, name: 'Studio · ' + SC.default.name, body: SC.default.body });
+      if (SC.offMode !== 'never') presets.push({ slot: PS_OFF, name: 'Schedule · Off', body: { on: false, transition: 50 } });
+      const ntp = { en: true };
+      if (Number.isFinite(HOME.lat) && Number.isFinite(HOME.lon)) { ntp.ln = HOME.lon; ntp.lt = HOME.lat; }
+      // timers: regular first, then sunrise (hour 255), then sunset (hour 254: WLED 16 marks sunset this way; 0.15 told them apart by order)
+      const ins = [], T = (t, macro, dow) => { const [h, m] = hm(t); ins.push({ en: 1, hour: h, min: m, macro, dow }); };
+      if (SC.onMode === 'time' && usualDaysMask) T(SC.onTime, PS_TONIGHT, usualDaysMask);
+      if (weeklyEntries.length && SC.onMode === 'time') weeklyEntries.forEach(([dow]) => T(SC.onTime, PS_WEEKDAY + +dow, DOW_BITS[+dow]));
+      if (SC.nightOn) { if (SC.nightTime === SC.nightTimeWE) T(SC.nightTime, PS_NIGHT, 127); else { T(SC.nightTime, PS_NIGHT, 79); T(SC.nightTimeWE, PS_NIGHT, 48); } }   // Sun–Thu / Fri–Sat
+      if (SC.offMode === 'time') T(SC.offTime, PS_OFF, 127);
+      const solar = [];
+      if (!modern || SC.offMode === 'sunrise') solar.push({ en: SC.offMode === 'sunrise' ? 1 : 0, hour: 255, min: 0, macro: SC.offMode === 'sunrise' ? PS_OFF : 0, dow: 127 });
+      if (SC.onMode === 'sunset' && usualDaysMask) solar.push({ en: 1, hour: modern ? 254 : 255, min: SC.onOffset, macro: PS_TONIGHT, dow: usualDaysMask });
+      if (weeklyEntries.length && SC.onMode === 'sunset') weeklyEntries.forEach(([dow]) => solar.push({ en: 1, hour: 254, min: SC.onOffset, macro: PS_WEEKDAY + +dow, dow: DOW_BITS[+dow] }));
+      if (!modern && SC.onMode !== 'sunset') solar.push({ en: 0, hour: 255, min: 0, macro: 0, dow: 127 });
+      const maxTimers = modern ? 64 : 8, essential = ins.length + (modern ? solar.length : 0), spare = maxTimers - essential;
+      if (spare < 0) throw new Error('This schedule needs ' + essential + ' timer slots, but this controller supports ' + maxTimers + ' for these events. Reduce weekday overrides or disable an automatic event.');
+      if (!modern) {
+        while (ins.length < maxTimers) ins.push({ en: 0, hour: 0, min: 0, macro: 0, dow: 0 });
+      }
+      ins.push(...solar);
+      await flushPalettes();
+      const schedule = clone(SC);
+      const saved = await fetch('/api/schedule/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule, expectedSchedule: persistedSchedule, presets: [...new Map(presets.map(entry => [entry.slot, entry])).values()], timers: ins, location: ntp }) });
+      const result = await saved.json();
+      if (!saved.ok || !result.ok) throw new Error(result.error || 'The Studio API could not save the schedule.');
+      savedSchedule = persistedSchedule = schedule;
+      $('schStat').textContent = '✓ Saved · ' + result.timers + ' timers · tonight: ' + (result.tonight || '');
       toast('Schedule saved to the controller 🌙'); openSchedule();
     } catch (err) { $('schStat').textContent = '⚠️ ' + err.message; }
     btn.disabled = false;
@@ -1456,20 +1481,41 @@
   let savedSchedule = clone(SC);
   function updateScheduleBodies(schedule) {
     const id = schedule.eveLook, last = APP.lastPush;
-    schedule.default = { look: id, name: id === 'current' ? (last?.name || 'Whatever you last pushed') : nameOf(id), body: id === 'current' ? (last?.P ? scheduledBody(last.P) : null) : bodyOf(id) };
-    schedule.programs.forEach(p => { p.lookName = nameOf(p.look); p.body = p.on === false ? null : bodyOf(p.look); });
-    schedule.weeklyBodies = Object.fromEntries(Object.entries(schedule.weeklyLooks).map(([dow, id]) => [dow, { look: id, name: nameOf(id), body: bodyOf(id) }]));
+    schedule.default = { look: id, name: id === 'current' ? (last?.name || 'Whatever you last pushed') : nameOf(id), body: id === 'current' ? (last?.P ? scheduledBody(last.P) : bodyOf(last?.id)) : bodyOf(id) };
+    (schedule.programs || []).forEach(p => { p.lookName = nameOf(p.look); p.body = p.on === false ? null : bodyOf(p.look); });
+    schedule.weeklyBodies = Object.fromEntries(Object.entries(schedule.weeklyLooks || {}).map(([dow, id]) => [dow, { look: id, name: nameOf(id), body: bodyOf(id) }]));
+    const presets = new Map();
+    const playlistIds = [id === 'current' ? last?.id : id, ...(schedule.programs || []).filter(p => p.on !== false).map(p => p.look)];
+    for (const selection of new Set(playlistIds.filter(plName))) {
+      const playlist = plById(selection.slice(3));
+      if (playlist?.items.length) for (const entry of playlistPresets(playlist)) presets.set(entry.slot, entry);
+    }
+    if (schedule.nightOn) presets.set(PS_NIGHT, { slot: PS_NIGHT, name: 'Schedule · Bedtime', body: bedtimeBody(schedule) });
+    schedule.auxiliaryPresets = [...presets.values()];
   }
-  function refreshScheduleBodies() {
-    if (!WL.info || !savedSchedule.default || $('schSave').disabled) return;
+  let scheduleRefresh = Promise.resolve();
+  function refreshScheduleBodies(transform) {
+    scheduleRefresh = scheduleRefresh.then(() => refreshSavedLooks(transform));
+    return scheduleRefresh;
+  }
+  async function refreshSavedLooks(transform) {
+    if (!WL.info || !savedSchedule?.default || $('schSave').disabled) return;
     try {
       const previous = savedSchedule, next = clone(previous);
+      if (transform) transform(next);
       updateScheduleBodies(next);
       if (JSON.stringify(next) === JSON.stringify(previous)) return;
-      flushPalettes().then(() => {
-        if ($('schSave').disabled || savedSchedule !== previous) return;
-        return fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: next }) }).then(r => { if (r.ok) savedSchedule = next; });
-      }).catch(error => toast('Could not refresh scheduled looks: ' + error.message, 'var(--warn)'));
+      await flushPalettes();
+      if ($('schSave').disabled || savedSchedule !== previous) return;
+      const response = await fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: next, expectedSchedule: persistedSchedule }) });
+      if (response.status === 409) {
+        const current = (await (await fetch('/api/app', { cache: 'no-store' })).json()).schedule;
+        persistedSchedule = current ?? null;
+        savedSchedule = clone(current || {});
+        return;
+      }
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      savedSchedule = persistedSchedule = next;
     } catch (error) { toast('Could not refresh scheduled looks: ' + error.message, 'var(--warn)'); }
   }
 
@@ -1564,7 +1610,7 @@
     SD.P.parts.forEach(pt => { if (BY_ID[pt.look]) pt.P = clone(BY_ID[pt.look].P); });   // snapshot, used if the library look is ever deleted
     if (SD.id && APP.userLooks.find(u => u.id === SD.id)) { const u = APP.userLooks.find(u => u.id === SD.id); Object.assign(u, { name: SD.name, desc, P: clone(SD.P) }); }
     else { SD.id = 'split-' + Date.now().toString(36); APP.userLooks.unshift({ id: SD.id, name: SD.name, cats: ['mine'], desc, P: clone(SD.P) }); }
-    save(['userLooks']); buildLooks(); renderNav(); renderGallery(true);
+    save(['userLooks']); buildLooks(); renderNav(); renderGallery(true); refreshScheduleBodies();
     history.replaceState(null, '', location.href.split('#')[0] + '#sections=' + SD.id);
     return SD.id;
   }
@@ -1576,7 +1622,7 @@
   APP.playlists = APP.playlists || []; APP.plSlots = APP.plSlots || {};
   let PLsel = null;
   const plById = id => APP.playlists.find(p => p.id === id);
-  const plName = v => typeof v === 'string' && v.startsWith('pl:') ? (plById(v.slice(3))?.name || 'Playlist') : null;
+  const plName = v => typeof v === 'string' && v.startsWith('pl:') ? plById(v.slice(3))?.name || null : null;
   function deleteLook(id) {
     const look = BY_ID[id];
     if (!look) return;
@@ -1593,17 +1639,19 @@
     const wasLastPushed = APP.lastPush?.id === id;
     if (wasLastPushed) APP.lastPush = null;
 
-    if (SC.eveLook === id || (SC.eveLook === 'current' && wasLastPushed)) SC.eveLook = fallback;
-    if (SC.nightLook === id) SC.nightLook = fallback;
-    SC.programs.forEach(program => { if (program.look === id) program.look = fallback; });
+    const replaceLook = schedule => {
+      if (schedule.eveLook === id || (schedule.eveLook === 'current' && wasLastPushed)) schedule.eveLook = fallback;
+      if (schedule.nightLook === id) schedule.nightLook = fallback;
+      (schedule.programs || []).forEach(program => { if (program.look === id) program.look = fallback; });
+      for (const [day, look] of Object.entries(schedule.weeklyLooks || {})) if (look === id) schedule.weeklyLooks[day] = fallback;
+    };
+    replaceLook(SC);
     APP.playlists.forEach(playlist => playlist.items.forEach(item => { if (item.look === id) item.look = fallback; }));
+    APP.moments.forEach(moment => { if (moment.look === id) moment.look = fallback; });
 
     buildLooks();
-    SC.default = SC.eveLook === 'current'
-      ? { look: 'current', name: 'Whatever you last pushed', body: null }
-      : { look: SC.eveLook, name: nameOf(SC.eveLook), body: bodyOf(SC.eveLook) };
-    SC.programs.forEach(program => { program.lookName = nameOf(program.look); program.body = bodyOf(program.look); });
-    save(['userLooks', 'deletedLooks', 'edits', 'starred', 'history', 'lastPush', 'schedule', 'playlists', 'plSlots']);
+    save(['userLooks', 'deletedLooks', 'edits', 'starred', 'history', 'lastPush', 'playlists', 'plSlots', 'moments']);
+    refreshScheduleBodies(replaceLook);
     renderNav(); renderGallery(true);
     if (state.route === 'schedule') fillSchedule();
     if (state.route === 'playlists') renderPlaylists();
@@ -1635,55 +1683,77 @@
     if (t.dataset.sl != null) pl.items[+t.dataset.sl].look = t.value;
     if (t.dataset.min != null) pl.items[+t.dataset.min].min = clamp(Math.round(+t.value) || 1, 1, 600);
     if (t.dataset.fade != null) pl.items[+t.dataset.fade].fade = clamp(Math.round(+t.value) || 0, 0, 300);
-    save(['playlists']); renderPlaylists();
+    save(['playlists']); refreshScheduleBodies(); renderPlaylists();
   });
   $('plEdit').addEventListener('click', e => {
     const pl = plById(PLsel); if (!pl) return; const t = e.target;
     if (t.closest('[data-mode]')) pl.mode = t.closest('[data-mode]').dataset.mode;
     else if (t.id === 'plAdd') pl.items.push({ look: pl.items[pl.items.length - 1]?.look || 'autumn-twinkle', min: 10, fade: 3 });
     else if (t.dataset.rmst != null) pl.items.splice(+t.dataset.rmst, 1);
-    else if (t.id === 'plDel') { if (!confirmDel.armed) { confirmDel.armed = true; t.textContent = 'Click again to delete'; setTimeout(() => confirmDel.armed = false, 3000); return; } APP.playlists = APP.playlists.filter(p => p !== pl); PLsel = APP.playlists[0]?.id || null; }
+    else if (t.id === 'plDel') {
+      if (!confirmDel.armed) { confirmDel.armed = true; t.textContent = 'Click again to delete'; setTimeout(() => confirmDel.armed = false, 3000); return; }
+      const id = 'pl:' + pl.id;
+      const replacePlaylist = schedule => {
+        const fallback = LOOKS[0]?.id || 'current';
+        if (schedule.eveLook === id || (schedule.eveLook === 'current' && APP.lastPush?.id === id)) schedule.eveLook = fallback;
+        (schedule.programs || []).forEach(p => { if (p.look === id) p.look = fallback; });
+      };
+      replacePlaylist(SC);
+      APP.playlists = APP.playlists.filter(p => p !== pl);
+      PLsel = APP.playlists[0]?.id || null;
+      save(['playlists']); refreshScheduleBodies(replacePlaylist); renderPlaylists();
+      return;
+    }
     else return;
-    save(['playlists']); renderPlaylists();
+    save(['playlists']); refreshScheduleBodies(); renderPlaylists();
   });
   function confirmDel() { }
   let plDrag = null;
   $('plEdit').addEventListener('dragstart', e => { const s = e.target.closest('[data-st]'); if (s) plDrag = +s.dataset.st; });
   $('plEdit').addEventListener('dragover', e => { if (plDrag != null && e.target.closest('[data-st]')) e.preventDefault(); });
-  $('plEdit').addEventListener('drop', e => { const t = e.target.closest('[data-st]'), pl = plById(PLsel); if (plDrag == null || !t || !pl) return; e.preventDefault(); moveItem(pl.items, plDrag, +t.dataset.st); plDrag = null; save(['playlists']); renderPlaylists(); });
+  $('plEdit').addEventListener('drop', e => { const t = e.target.closest('[data-st]'), pl = plById(PLsel); if (plDrag == null || !t || !pl) return; e.preventDefault(); moveItem(pl.items, plDrag, +t.dataset.st); plDrag = null; save(['playlists']); refreshScheduleBodies(); renderPlaylists(); });
   // write the looks a playlist plays into presets 200-229 (no brightness, so bedtime dimming sticks), then the playlist itself
   function plItemSlot(look) {
     const used = new Set(APP.playlists.flatMap(p => p.items.map(i => i.look)));
-    if (APP.plSlots[look] != null) return APP.plSlots[look];
-    const taken = new Set(Object.values(APP.plSlots));
+    if (APP.plSlots[look] != null && !APP.moments.some(m => m.ps === APP.plSlots[look])) return APP.plSlots[look];
+    const taken = new Set([...Object.values(APP.plSlots), ...APP.moments.map(m => m.ps)]);
     for (let s = PS_ITEMS; s < PS_PL; s++) if (!taken.has(s)) return APP.plSlots[look] = s;
-    for (const k in APP.plSlots) if (!used.has(k)) { const s = APP.plSlots[k]; delete APP.plSlots[k]; return APP.plSlots[look] = s; }
+    for (const k in APP.plSlots) if (!used.has(k) && !APP.moments.some(m => m.ps === APP.plSlots[k])) { const s = APP.plSlots[k]; delete APP.plSlots[k]; return APP.plSlots[look] = s; }
     throw new Error('Too many different looks across playlists (30 max)');
   }
   function plBody(pl) {
     const ps = pl.items.map(it => plItemSlot(it.look));
     return { on: true, bri: clamp(Math.max(...pl.items.map(it => applyMaster(BY_ID[it.look]?.P || { bri: 180 }).bri)), 1, 255), playlist: { ps, dur: pl.items.map(it => clamp(it.min * 600, 10, 65000)), transition: pl.items.map(it => it.fade * 10), repeat: pl.mode === 'once' ? 1 : 0, end: 0, r: pl.mode === 'shuffle' } };
   }
-  async function writePlaylist(pl) {   // every write makes WLED run that preset, so the caller decides what plays afterwards
-    const pause = ms => new Promise(r => setTimeout(r, ms)), i = APP.playlists.indexOf(pl);
+  function playlistPresets(pl) {
+    const i = APP.playlists.indexOf(pl);
     if (i < 0 || i > 9) throw new Error('10 playlists max on the controller');
-    const body = plBody(pl); save(['plSlots']);
-    for (const [k, it] of pl.items.entries()) {
-      const l = BY_ID[it.look]; if (!l) continue;
-      const b = wledBody(applyMaster(l.P)); delete b.bri; delete b._palKey; delete b.pl;
-      await flushPalettes(); await wpost(Object.assign(b, { psave: body.playlist.ps[k], n: 'Playlist look · ' + l.name, o: true })); await pause(450);
-    }
-    await wpost(Object.assign({}, body, { psave: PS_PL + i, n: 'Playlist · ' + pl.name, o: true })); await pause(450);
-    return PS_PL + i;
+    const body = plBody(pl);
+    const presets = pl.items.map((it, k) => {
+      const look = BY_ID[it.look];
+      if (!look) throw new Error('A playlist look no longer exists.');
+      const command = wledBody(applyMaster(look.P));
+      delete command.bri; delete command.pl; delete command.on;
+      return { slot: body.playlist.ps[k], name: 'Playlist look · ' + look.name, body: command };
+    });
+    save(['plSlots']);
+    return [...presets, { slot: PS_PL + i, name: 'Playlist · ' + pl.name, body }];
+  }
+  async function writePlaylist(pl) {
+    const presets = playlistPresets(pl);
+    await flushPalettes();
+    await storePresets(presets);
+    return presets[presets.length - 1].slot;
   }
   $('plStart').onclick = async () => {
     const pl = plById(PLsel); if (!pl || !pl.items.length) return;
     $('plStart').disabled = true; $('plStat').innerHTML = '<span class="aispin"></span>Loading ' + pl.items.length + ' looks into the controller…';
     try {
       const ps = await writePlaylist(pl);
-      await wpost(Object.assign(plBody(pl), { psave: 3, n: 'Studio · ' + pl.name, o: true }));   // boot look = the playlist, so a restart resumes it
-      await new Promise(r => setTimeout(r, 500)); await wpost({ ps });
-      APP.lastPush = { id: 'pl:' + pl.id, name: pl.name, P: null, at: Date.now() }; save(['lastPush']);
+      await storePresets([{ slot: 3, name: 'Studio · ' + pl.name, body: plBody(pl) }]);   // boot look = the playlist, so a restart resumes it
+      if (WL.info?.leds?.bootps !== 3) await cfgPatch({ def: { ps: 3 } }, { preserveBuses: true });
+      await wpost({ ps }, true);
+      APP.lastPush = { id: 'pl:' + pl.id, name: pl.name, P: null, at: Date.now() }; save(['lastPush']); refreshScheduleBodies();
       $('plStat').textContent = '✓ Playing on WLED'; toast(pl.name + ' is playing on WLED');
     } catch (err) { $('plStat').textContent = '⚠️ ' + err.message; }
     $('plStart').disabled = false; setTimeout(renderPlaylists, 800);
@@ -1810,23 +1880,27 @@
       '<div class="momlink mono">' + esc(momLink(m)) + '</div></div>').join('') || '<p class="sh">No moments yet. Add one, pick a look, then copy its link into an automation platform.</p>';
     box.querySelectorAll('.momrow').forEach(r => r.querySelector('[data-mk=look]').value = APP.moments[+r.dataset.m].look);
   }
-  async function writeMoment(m) {   // store the look in its preset; saving runs it, so put back what was showing
-    const before = await wget('/json/state'), l = BY_ID[m.look]; if (!l) throw new Error('That look no longer exists');
-    const b = wledBody(applyMaster(l.P)); delete b._palKey; delete b.pl; b.transition = 10;
-    await flushPalettes(); await wpost(Object.assign(b, { psave: m.ps, n: 'Moment · ' + m.name, o: true })); await new Promise(r => setTimeout(r, 700));
-    if (before.ps > 0) await wpost({ ps: before.ps }); else await wpost({ on: before.on, bri: before.bri, transition: 0, seg: (before.seg || []).map(s => ({ id: s.id, start: s.start, stop: s.stop, fx: s.fx, sx: s.sx, ix: s.ix, c1: s.c1, c2: s.c2, c3: s.c3, o1: s.o1, o2: s.o2, o3: s.o3, pal: s.pal, col: s.col, grp: s.grp, spc: s.spc, rev: s.rev, mi: s.mi, slow: s.slow, on: s.on, bri: s.bri })) });
-    // wait until the roof really shows the previous look again, so a test right after snapshots the right thing
-    for (let k = 0; k < 20; k++) { await new Promise(r => setTimeout(r, 150)); const st = await wget('/json/state').catch(() => null); if (st && (before.ps > 0 ? st.ps === before.ps : st.seg?.[0]?.fx === before.seg?.[0]?.fx)) break; }
-    await new Promise(r => setTimeout(r, 400));
-    m.saved = JSON.stringify([m.look, m.ps, b.seg && b.seg[0]]); save(['moments']);
+  function momentBody(m) {
+    const look = BY_ID[m.look];
+    if (!look) throw new Error('That look no longer exists');
+    const body = wledBody(applyMaster(look.P));
+    delete body.pl;
+    return { ...body, transition: 10 };
   }
-  const momDirty = m => m.saved !== JSON.stringify([m.look, m.ps, (() => { const l = BY_ID[m.look]; if (!l) return null; const b = wledBody(applyMaster(l.P)); return b.seg && b.seg[0]; })()]);
+  async function writeMoment(m) {
+    const body = momentBody(m);
+    await flushPalettes();
+    await storePresets([{ slot: m.ps, name: 'Moment · ' + m.name, body }]);
+    m.saved = JSON.stringify([m.look, m.ps, body]);
+    save(['moments']);
+  }
+  const momDirty = m => !BY_ID[m.look] || m.saved !== JSON.stringify([m.look, m.ps, momentBody(m)]);
   $('ctGrid').addEventListener('change', e => {
     const r = e.target.closest('.momrow'); if (r) { const m = APP.moments[+r.dataset.m], k = e.target.dataset.mk; if (k) { m[k] = k === 'dur' || k === 'tt' ? +e.target.value : e.target.value; save(['moments']); renderMoments(); } return; }
     if (e.target.id === 'tlsDSt') { $('tlsDStT').hidden = e.target.value === 'sunset'; }
   });
   $('ctGrid').addEventListener('click', async e => {
-    if (e.target.id === 'momAdd') { const used = new Set(APP.moments.map(m => m.ps)); let ps = PS_MOM; while (used.has(ps) && ps < PS_MOM + 10) ps++; if (ps >= PS_MOM + 10) return toast('10 moments max', 'var(--warn)');
+    if (e.target.id === 'momAdd') { const used = new Set([...APP.moments.map(m => m.ps), ...Object.values(APP.plSlots)]); let ps = PS_MOM; while (used.has(ps) && ps < PS_MOM + 10) ps++; if (ps >= PS_MOM + 10) return toast('10 moments max', 'var(--warn)');
       APP.moments.push({ name: APP.moments.length ? 'New moment' : 'Welcome home', look: 'porch-glow', dur: 20, tt: 3, ps }); save(['moments']); renderMoments(); return; }
     const a = e.target.closest('[data-ma]'); if (!a) return; const i = +a.closest('.momrow').dataset.m, m = APP.moments[i];
     if (a.dataset.ma === 'del') { APP.moments.splice(i, 1); save(['moments']); wpost({ pdel: m.ps }); renderMoments(); return; }
@@ -1916,13 +1990,17 @@
     lookSrc: l => effective(l.P),
     shapeFx: name => { const i = (WL.effects || []).indexOf(name); return i > 0 ? i : null; },
     customPalId: st => CPAL(slotFor(st)),
+    findCustomPal: st => {
+      const slot = Object.keys(APP.palSlots).find(s => APP.palSlots[s].key === stopsKey(st));
+      return slot === undefined ? null : CPAL(+slot);
+    },
     fwLayers: hasStudioEffects, canPush, fwVer: () => WL.info?.ver || '', fps: () => WL.info?.leds?.fps,
     toast, goLibrary, makeView: cv => makeView(cv, CROP_STAGE, 1, 2), drawHouse,
     saveLook({ id, name, desc, P, cats }) {
       const u = id && APP.userLooks.find(x => x.id === id);
       if (u) { Object.assign(u, { name, desc, P: clone(P) }, cats ? { cats: cats.slice() } : {}); delete u.fromSimple; }
       else { id = 'stack-' + Date.now().toString(36); APP.userLooks.unshift({ id, name, cats: cats ? cats.slice() : ['mine'], desc, P: clone(P) }); }
-      save(['userLooks']); buildLooks(); renderNav(); renderGallery(true); return id;
+      save(['userLooks']); buildLooks(); renderNav(); renderGallery(true); refreshScheduleBodies(); return id;
     },
     push: id => pushToHouse(applyMaster(BY_ID[id].P), id, BY_ID[id].P),
     openBuilderDraft: d => { TLB.openDraft(d); location.hash = 'builder'; },
@@ -1951,5 +2029,5 @@
     if (!FXL) toast('Preview engine not loaded yet: showing simple previews', 'var(--warn)');
   })();
   // test hook for the screen-vs-roof audit (scratchpad audit.cjs); only with ?audit in the URL
-  if (/[?&]audit\b/.test(location.search)) window.__audit = { looks: () => LOOKS, applyMaster, wledBody, renderLook, N, V16, palSlots: () => APP.palSlots, schedule: () => APP.schedule };
+  if (/[?&]audit\b/.test(location.search)) window.__audit = { looks: () => LOOKS, applyMaster, wledBody, renderLook, N, V16: previewPreGamma, palSlots: () => APP.palSlots, schedule: () => APP.schedule };
 })();

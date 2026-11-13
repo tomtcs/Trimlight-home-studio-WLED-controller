@@ -23,7 +23,7 @@
       if (!app || Array.isArray(app) || typeof app !== 'object') throw new Error('Backup application data is missing or invalid.');
       if (!controller || Array.isArray(controller) || typeof controller !== 'object') throw new Error('Backup controller settings are missing or invalid.');
       for (const [key, type] of [['userLooks', 'array'], ['roofSections', 'array'], ['playlists', 'array'], ['schedule', 'object'], ['edits', 'object'], ['starred', 'object']]) {
-        if (key in app && (app[key] === null || typeof app[key] !== type || (type === 'object' && Array.isArray(app[key])))) throw new Error(`Backup has an invalid ${key} value.`);
+        if (key in app && (app[key] === null || (type === 'array' ? !Array.isArray(app[key]) : typeof app[key] !== 'object' || Array.isArray(app[key])))) throw new Error(`Backup has an invalid ${key} value.`);
       }
     };
 

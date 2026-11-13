@@ -3,7 +3,7 @@ services:
     build: .
     container_name: trimlight-home-studio-wled
     ports:
-      - "8080:80"
+      - "${STUDIO_BIND_ADDRESS:-0.0.0.0}:8080:80"
     depends_on:
       - api
     restart: unless-stopped

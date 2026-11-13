@@ -30,7 +30,7 @@
       if (p.repeat === 1 && plRun.i >= p.ps.length) { plRun = null; return; } plTimer = setTimeout(step, d * 100); push(); };
     step();
   }
-  function applyPreset(id, fromPl) { const p = presets[id]; if (!p) return; if (!fromPl) stopPlaylist(); if (p.playlist) return startPlaylist(p.playlist, id); apply(clone(p), true); st.ps = id; }
+  function applyPreset(id, fromPl) { const p = presets[id]; if (!p || p.ifon && !st.on) return; if (!fromPl) stopPlaylist(); if (p.playlist) return startPlaylist(p.playlist, id); apply(clone(p), true); st.ps = id; }
   function apply(b, quiet) {
     if (b.psave != null) { const p = clone(b); ['psave', 'o', 'ib', 'sb', 'time'].forEach(k => delete p[k]); if (!b.seg && !b.playlist) Object.assign(p, { on: st.on, bri: st.bri, seg: clone(st.seg.filter(Boolean)) }); presets[b.psave] = p; }
     if (b.ps != null && b.psave == null) { applyPreset(b.ps); return push(); }
@@ -113,14 +113,34 @@
       return json({});
     }
     if (u.startsWith('/api/')) {
+      if (u === '/api/controller/push') {
+        if (REAL) return realFetch(url, opt);
+        const data = parsed(), ids = new Set(data.seg.map(seg => seg.id));
+        data.seg.push(...st.seg.filter(seg => seg && !ids.has(seg.id)).map(seg => ({ id: seg.id, stop: 0 })));
+        apply(data);
+        presets[3] = { ...clone(data), n: data.name };
+        cfg.def = { ...cfg.def, ps: 3 };
+        return json({ ok: true, state: stateJSON() });
+      }
+      if (u === '/api/controller/presets' || u === '/api/schedule/save') {
+        if (REAL) return realFetch(url, opt);
+        const data = parsed(), entries = data.presets || [];
+        if (u === '/api/schedule/save') {
+          const response = await window.fetch('/api/app', { method: 'POST', body: JSON.stringify({ schedule: data.schedule, expectedSchedule: data.expectedSchedule }) });
+          if (!response.ok) return response;
+          cfg.timers = { ...cfg.timers, ins: data.timers };
+        }
+        for (const { slot, body, name } of entries) presets[slot] = { ...clone(body), n: name };
+        return json({ ok: true, changed: entries.length, timers: data.timers?.filter(t => t.en && t.macro).length, tonight: 'saved (demo)' });
+      }
       if (u === '/api/scheduler/status') return realFetch(url, opt);
       if (u === '/api/app') {
         if (SERVER) {
           const response = await realFetch(url, opt);
-          if (m === 'POST' && response.ok) { Object.assign(APPSTATE, parsed()); SERVER.app = Object.assign({}, APPSTATE); SERVER.has_app = true; }
+          if (m === 'POST' && response.ok) { const data = parsed(); delete data.expectedSchedule; Object.assign(APPSTATE, data); SERVER.app = { ...SERVER.app, ...data }; SERVER.has_app = true; }
           return response;
         }
-        if (m === 'POST') { Object.assign(APPSTATE, parsed()); const keep = {}; for (const k in APPSTATE) keep[k] = APPSTATE[k]; store(keep); return json({ ok: true }); }
+        if (m === 'POST') { const data = parsed(); delete data.expectedSchedule; Object.assign(APPSTATE, data); store(APPSTATE); return json({ ok: true }); }
         return json(APPSTATE);
       }
       if (u === '/api/settings') return realFetch(url, opt);

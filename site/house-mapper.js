@@ -102,14 +102,16 @@
       host.querySelectorAll('[data-edit-line]').forEach(button => button.addEventListener('click', () => { const line = current().lines.find(item => item.id === button.dataset.editLine); if (line) begin(line); }));
       host.querySelectorAll('[data-remove-line]').forEach(button => button.addEventListener('click', async () => { const views = viewsNow(); views[side].lines = views[side].lines.filter(line => line.id !== button.dataset.removeLine); await persist(views, 'Roofline section removed.'); }));
       host.querySelector('[data-photo]')?.addEventListener('change', async event => {
-        const file = event.currentTarget.files?.[0]; if (!file) return;
+        const input = event.currentTarget, elevation = side, file = input.files?.[0]; if (!file) return;
         try {
           const image = await createImageBitmap(file); let data = '', size = [image.width, image.height];
           for (const width of [1400, 1100, 850, 650]) { const scale = Math.min(1, width / image.width); const canvas = document.createElement('canvas'); canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale); canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height); data = canvas.toDataURL('image/jpeg', .72); size = [canvas.width, canvas.height]; if (data.length <= 180000) break; }
           image.close(); if (data.length > 180000) throw new Error('This photo is still too large. Choose a smaller or lower-resolution image.');
-          const views = viewsNow(); views[side] = { photo: data, photoSize: size, lines: [] }; await persist(views, `${sidesNow().find(item => item.id === side).label} photo saved. Existing traces for this view were cleared.`);
+          const target = sidesNow().find(item => item.id === elevation);
+          if (!target) throw new Error('The selected elevation was removed.');
+          const views = viewsNow(); views[elevation] = { photo: data, photoSize: size, lines: [] }; await persist(views, `${target.label} photo saved. Existing traces for this view were cleared.`);
         } catch (error) { status(error.message || 'Could not prepare the photo. Use JPG, PNG, or WebP.'); }
-        event.currentTarget.value = '';
+        input.value = '';
       });
       host.querySelector('[data-line-name]')?.addEventListener('input', event => { title = event.currentTarget.value; });
       host.querySelector('[data-line-kind]')?.addEventListener('change', event => { kind = event.currentTarget.value; });

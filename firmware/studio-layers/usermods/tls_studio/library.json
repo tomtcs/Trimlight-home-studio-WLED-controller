@@ -1,7 +1,7 @@
 {
   "name": "tls_studio",
   "version": "0.1.0",
-  "description": "Trimlight Studio firmware extension: six Studio effects, layer blending, colour stops, modulators (reports as 16.0.1-tls4)",
+  "description": "Trimlight Studio firmware extension: six Studio effects, layer blending, colour stops, modulators (reports as 16.0.1-tls5)",
   "build": { "libArchive": false },
   "dependencies": {}
 }
