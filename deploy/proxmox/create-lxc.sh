@@ -47,10 +47,6 @@ if [[ ! -d $app/repo.git ]] || [[ $(git --git-dir="$app/repo.git" remote get-url
   echo 'This guest does not contain a partial Studio installation.' >&2
   exit 1
 fi
-if [[ -e $app/current ]]; then
-  echo 'Studio is already installed. Run update inside the LXC.' >&2
-  exit 1
-fi
 CHECK
   if pct exec "$ctid" -- test -s /root/.ssh/authorized_keys; then ssh_mode=key; fi
 else
@@ -135,8 +131,15 @@ ssh_setup=$(mktemp)
 trap 'rm -f "$installer" "$ssh_setup"' EXIT
 git --git-dir=/opt/trimlight-studio/repo.git show FETCH_HEAD:deploy/proxmox/install.sh > "$installer"
 git --git-dir=/opt/trimlight-studio/repo.git show FETCH_HEAD:deploy/proxmox/configure-ssh.sh > "$ssh_setup"
-bash "$ssh_setup" "$3"
-bash "$installer"
+if [[ -e /opt/trimlight-studio/current ]]; then
+  systemctl enable --now trimlight-studio.service nginx.service
+else
+  bash "$installer"
+fi
+if ! bash "$ssh_setup" "$3"; then
+  echo 'Studio is installed. Retry SSH setup with --resume after checking the service logs above.' >&2
+  exit 1
+fi
 GUEST
 trap - ERR
 ip=$(pct exec "$ctid" -- ip -4 -o addr show dev eth0 scope global | awk 'NR==1 {sub(/\/.*/, "", $4); print $4}') || ip=

@@ -51,5 +51,8 @@ if ! validate; then
   echo 'OpenSSH rejected the settings or another configuration takes precedence.' >&2
   exit 1
 fi
-systemctl enable --now ssh.service
-systemctl reload ssh.service
+if ! systemctl enable ssh.service || ! systemctl restart ssh.service; then
+  echo 'OpenSSH could not start. Recent ssh.service logs:' >&2
+  journalctl -b -u ssh.service -n 25 --no-pager >&2 || true
+  exit 1
+fi

@@ -15,7 +15,7 @@ ROOT_STORAGE=local-zfs NET0='name=eth0,bridge=vmbr0,tag=50,ip=dhcp' bash create-
 
 Open the container address shown by the script on port **8080**. The browser and the LXC both need network access to WLED. Use the controller’s LAN IP if its hostname is unavailable. The LXC also needs outbound HTTPS to GitHub and access to its configured Debian package mirrors. Keep the Studio web interface on your trusted LAN.
 
-If the installer stops after creating the guest and initializing the Git repository, correct the reported error and run `bash create-lxc.sh --resume CTID` from the node shell. For an installation started with `STUDIO_REVISION`, pass the same variable when resuming. Resume reuses the container and root password. For a GitHub DNS error, inspect `pct exec CTID -- cat /etc/resolv.conf` and `pct exec CTID -- ip route`. Set the container’s DNS server in Proxmox if its configured resolver is unreachable or cannot resolve GitHub.
+If the installer stops after creating the guest and initializing the Git repository, correct the reported error and run `bash create-lxc.sh --resume CTID` from the node shell. Set `STUDIO_REVISION` if you are using a pinned installer revision. Resume reuses the container and root password, and can retry SSH after Studio has been installed. For a GitHub DNS error, inspect `pct exec CTID -- cat /etc/resolv.conf` and `pct exec CTID -- ip route`. If SSH fails, inspect `pct exec CTID -- journalctl -b -u ssh.service -n 25 --no-pager`.
 
 ## Root login and SSH
 

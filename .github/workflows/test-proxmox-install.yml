@@ -34,6 +34,14 @@ jobs:
           set -euo pipefail
           scratch=$(mktemp -d)
           trap 'rm -rf -- "$scratch"' EXIT
+          # Debian 13 LXC can fail OpenSSH reload (Debian bug #1128329).
+          cat > "$scratch/systemctl" <<'SH'
+          #!/bin/bash
+          if [[ $1 == reload ]]; then exit 1; fi
+          exec /usr/bin/systemctl "$@"
+          SH
+          chmod 0755 "$scratch/systemctl"
+          export PATH="$scratch:$PATH"
           password=$(openssl rand -hex 24)
           printf 'root:%s\n' "$password" | chpasswd
           passwd -S root | grep -q '^root P '
