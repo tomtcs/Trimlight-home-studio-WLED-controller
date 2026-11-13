@@ -6,6 +6,10 @@ A WLED-focused lighting interface for configuring output channels, previewing ef
 
 Use <code>docker compose up -d --build</code> and open <http://localhost:8080>. In **Wiring &amp; setup**, choose **Real WLED controller**, enter its IP address or <code>.local</code> hostname, then select **Test connection**. Review the detected output channels, LED counts, and color order. Choose the controller's 2-, 4-, or 6-channel capacity; the number of configured outputs may be lower. Use **Map each house side** to upload elevation photos, trace roof edges or ridges, and toggle wire-only links. **Manage elevations** lets each installation add, rename, or remove house sides. Once setup is saved, the selected elevation photo and traced paths are used in the look previews; uploaded photos are shown in grayscale so the animated colors stand out. **Apply settings &amp; connect** writes changed LED counts and color order to WLED, then reconnects the app. Optional latitude and longitude values update WLED's location while leaving its configured time zone unchanged. Demo mode can save controller-capacity and output settings without contacting hardware, as well as store home photos and traces.
 
+## Proxmox LXC
+
+The [Proxmox installer](deploy/proxmox/README.md) runs Studio directly in an unprivileged Debian container with Nginx and systemd. It includes an in-container `update` command and a migration path from Docker.
+
 ## Persistent application data
 
 The web container serves the UI; a separate small API container stores the app's records in SQLite at <code>/data/studio.sqlite3</code>. Docker Compose mounts <code>/data</code> from the named <code>studio-data</code> volume, outside either container image. App patterns, edits, playlists, schedules, controller connection/output setup, five elevation photos and traced sections, and named bulb-range sections are saved there and shared by clients using this server. Rebuilding or replacing the containers keeps this volume. <code>docker compose down</code> also keeps it; <code>docker compose down -v</code> removes it. Back up the Docker volume before host migrations or destructive volume cleanup.

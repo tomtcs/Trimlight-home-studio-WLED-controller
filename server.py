@@ -762,4 +762,4 @@ if __name__ == "__main__":
     if initial_settings.get("mode") == "wled" and initial_settings.get("host"):
         scheduler_status(enabled=True, state="starting", message="Waiting for the first WLED schedule check.")
     threading.Thread(target=scheduler_loop, name="wled-calendar-scheduler", daemon=True).start()
-    ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8000"))), Handler).serve_forever()
+    ThreadingHTTPServer((os.environ.get("STUDIO_BIND", "0.0.0.0"), int(os.environ.get("PORT", "8000"))), Handler).serve_forever()
