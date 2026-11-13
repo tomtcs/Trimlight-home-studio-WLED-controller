@@ -34,17 +34,40 @@ jobs:
         working-directory: wled
       - run: pio run -e gledopto_elite_tls
         working-directory: wled
+      - name: Validate the ESP32 application image
+        run: |
+          mkdir -p dist
+          image=wled/.pio/build/gledopto_elite_tls/firmware.bin
+          python "$HOME/.platformio/packages/tool-esptoolpy/esptool.py" --chip esp32 image_info --version 2 "$image" | tee dist/image-info.txt
+          python - "$image" <<'PY'
+          from pathlib import Path
+          import struct
+          import sys
+
+          image = Path(sys.argv[1]).read_bytes()
+          partitions = Path('wled/.pio/build/gledopto_elite_tls/partitions.bin').read_bytes()
+          slots = {}
+          for offset in range(0, len(partitions) - 31, 32):
+              magic, kind, subtype, _, size = struct.unpack_from('<HBBII', partitions, offset)
+              if magic == 0x50AA and kind == 0 and subtype in (0x10, 0x11):
+                  slots[subtype] = size
+          if set(slots) != {0x10, 0x11} or len(image) + 1024 > min(slots.values()):
+              sys.exit('The app and upload overhead must fit both OTA slots.')
+          if struct.unpack_from('<I', image, 32)[0] != 0xABCD5432:
+              sys.exit('The binary does not contain an ESP32 application descriptor.')
+          print(f'{len(image)} bytes. OTA slots: {list(slots.values())}.')
+          PY
       - name: Package firmware and corresponding source
         run: |
           mkdir -p dist
-          cp wled/.pio/build/gledopto_elite_tls/firmware.bin dist/WLED_16.0.1-tls5_ESP32_Ethernet.bin
+          cp wled/.pio/build/gledopto_elite_tls/firmware.bin dist/WLED_16.0.1-tls6_ESP32_Ethernet.bin
           cp wled/LICENSE dist/WLED-LICENSE
           git -C wled archive HEAD | gzip > dist/wled-16.0.1-gledopto-source.tar.gz
           tar -czf dist/studio-layers-source.tar.gz firmware/studio-layers
           cd dist
-          sha256sum WLED_16.0.1-tls5_ESP32_Ethernet.bin > SHA256SUMS
+          sha256sum WLED_16.0.1-tls6_ESP32_Ethernet.bin > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
-          name: WLED-16.0.1-tls5-ESP32-Ethernet
+          name: WLED-16.0.1-tls6-ESP32-Ethernet
           path: dist/
           if-no-files-found: error
