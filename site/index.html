@@ -302,7 +302,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 
 <!-- =========================== GALLERY =========================== -->
 <section id="gallery" class="route">
-  <aside>
+  <aside id="mobileNav">
     <div class="brand">
       <div><img class="brand-logo" src="trimlight-logo.svg" alt="Trimlight"><small id="brandSub">HOME STUDIO · WLED</small></div>
     </div>
@@ -328,6 +328,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
   </aside>
   <div class="gmain">
     <div class="ghead">
+      <button id="mobileMenu" class="mobile-menu" aria-controls="mobileNav" aria-expanded="false">☰ Menu</button>
       <div>
         <h1 id="secTitle">All looks</h1>
         <div class="sub" id="secSub">Every look, on your house. Click one to edit it.</div>
@@ -689,7 +690,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 <script src="wled-settings.js"></script>
 <script src="house-mapper.js?v=studio-stability-1"></script>
 <script src="demo-shim.js?v=studio-stability-1"></script>
-<script src="app.js?v=studio-bedtime-1"></script>
+<script src="app.js?v=studio-mobile-1"></script>
 <script src="backup.js?v=studio-stability-1"></script>
 
 
@@ -702,12 +703,8 @@ body:before{content:"";position:fixed;inset:0 0 auto;height:5px;background:var(-
 .demotag button{background:none;border:1px solid rgba(98,214,130,.4);border-radius:7px;color:#b9f4c9;font:11px Inter,sans-serif;padding:3px 8px;cursor:pointer;flex:none}
 .demotag button:focus-visible{outline:2px solid #62d682;outline-offset:2px}
 .route{top:30px!important}.schpage{height:calc(100vh - 102px)!important}
-.narrow{display:none}
-@media (max-width:820px){.narrow{display:block;position:fixed;inset:0;z-index:70;background:#0b0e0d;color:#f4f7f5;padding:max(16px,env(safe-area-inset-left,0px));font:15px/1.5 Inter,system-ui,sans-serif}
-.narrow div{max-width:420px;margin:18vh auto 0;display:flex;flex-direction:column;gap:12px}.narrow h1{font:600 24px "Space Grotesk",Inter,sans-serif;margin:0;text-wrap:balance}.narrow p{margin:0;color:#98a79d}.narrow img{border-radius:14px;max-width:100%}}
 </style>
 <div class="demotag" id="modeBanner" role="status"><b>DEMO</b><span>A simulated controller · no physical lights are controlled</span></div>
-<div class="narrow"><div><img src="trimlight-logo.svg" alt="Trimlight"><h1>Trimlight Home Studio · WLED</h1><p>This WLED edition is a lighting app for a house roofline: a library of animated looks, an editor, sections, playlists and a nightly schedule. It needs a wider screen. Open the link on a laptop or desktop.</p></div></div>
 
 <style>
 .wg{position:fixed;inset:30px 0 0;z-index:55;background:#0b0e0d;color:#f4f7f5;overflow-y:auto;font:15px/1.6 Inter,system-ui,sans-serif}
@@ -780,4 +777,6 @@ body:before{content:"";position:fixed;inset:0 0 auto;height:5px;background:var(-
 })();
 </script>
 
+<link rel="stylesheet" href="mobile.css?v=1">
+<script src="mobile.js?v=1"></script>
 </body></html>

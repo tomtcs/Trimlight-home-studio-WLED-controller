@@ -566,7 +566,7 @@
     return swatchesOf(P).filter(c => Math.max(...c) > 12).map(c => '<i style="background:' + hex(c) + ';box-shadow:0 0 6px ' + hex(c) + '88"></i>').join('');
   }
   let cardViews = []; const visibleCards = new Set();
-  const io = new IntersectionObserver(es => es.forEach(en => { const cv = cardViews[+en.target.dataset.vi]; if (!cv) return; if (en.isIntersecting) { visibleCards.add(cv); cv.v.dirty = true; } else visibleCards.delete(cv); }), { root: $('scroller'), rootMargin: '60px 0px' });
+  const io = new IntersectionObserver(es => es.forEach(en => { const cv = cardViews[+en.target.dataset.vi]; if (!cv) return; if (en.isIntersecting) { visibleCards.add(cv); cv.v.dirty = true; } else visibleCards.delete(cv); }), { root: null, rootMargin: '60px 0px' });
   function renderGallery(keepScroll) {
     io.disconnect(); visibleCards.clear();
     cardViews.forEach(c => { const i = allViews.indexOf(c.v); if (i >= 0) allViews.splice(i, 1); }); cardViews = [];
