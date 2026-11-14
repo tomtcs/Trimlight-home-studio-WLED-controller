@@ -1,0 +1,96 @@
+/* Loaded after the route styles so mobile rules also cover generated controls. */
+.mobile-menu{display:none}
+@media (max-width:900px){
+  :root{padding:0}
+  .route{top:calc(30px + env(safe-area-inset-top))!important;bottom:env(safe-area-inset-bottom);padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+  .demotag{top:env(safe-area-inset-top)}
+  .mobile-menu{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:8px 12px;border:1px solid var(--line-2);border-radius:10px;background:var(--panel-2)}
+  #gallery{display:block;overflow-y:auto}
+  #gallery>aside{display:none;width:auto;height:auto;max-height:55dvh;position:relative;margin:12px;border-radius:14px;border:1px solid var(--line)}
+  #gallery.menu-open>aside{display:flex}
+  #gallery .brand{display:none}
+  #gallery .gmain{height:auto;min-height:100%}
+  #gallery .ghead{height:auto;flex-wrap:wrap;gap:12px;padding:14px}
+  #gallery .ghead h1{font-size:20px}
+  #gallery .ghead .sub{max-width:230px}
+  #gallery .search{margin:0;flex:1 1 100%;width:auto}
+  #gallery .perrow{display:none}
+  #gallery .onhouse{max-width:100%;height:auto;min-height:44px}
+  #gallery .onhouse b{overflow-wrap:anywhere}
+  #gallery .master{margin:12px 14px 0;gap:12px;padding:12px}
+  #gallery .master .mt{flex-basis:100%}
+  #gallery .master .mc{flex-wrap:wrap;max-width:100%}
+  #gallery .scroller{overflow:visible;flex:none;padding:8px 14px 28px}
+  #gallery .grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+  #gallery .gh{flex-wrap:wrap}
+  #gallery .nav button{min-height:44px;height:auto}
+  .route input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]),.route select,.route textarea,.wg input,.wg select{font-size:16px!important;max-width:100%;min-width:0}
+  .route button,.wg button{min-height:44px}
+  .topbar{flex-wrap:wrap;gap:10px;padding:12px}
+  #edit{display:block;overflow-y:auto}
+  #edit .stagewrap{height:280px;padding:12px}
+  #edit .panel{padding:0 12px 12px}
+  #edit .pin{height:auto;overflow:visible}
+  #edit .mini{display:none}
+  #edit .foot{padding:12px;flex-wrap:wrap}
+  .push{min-width:0;max-width:100%}
+  #edit .foot .push{width:100%}
+  #edit .fmsg{flex-basis:100%}
+  #simple{overflow-y:auto;display:block}
+  #simple .top,#builder .top{height:auto;flex-wrap:wrap;padding:12px;gap:10px}
+  #simple .steps{order:5;width:100%;overflow-x:auto;justify-content:space-between}
+  #simple .steps button{padding:6px}
+  #simple .wrap{display:block}
+  #simple .left{padding:12px}
+  #simple .stage{flex:none;min-height:220px;height:220px}
+  #simple .pbody{overflow:visible;padding:12px}
+  #simple .phead,#simple .pfoot{padding:12px}
+  #simple .pfoot{flex-wrap:wrap}
+  #simple .right{border-left:0}
+  #builder .crumb{flex:1;min-width:140px}
+  #builder .crumb input{width:100%}
+  #builder .app>*{min-width:0}
+  #builder .mid{padding:12px}
+  #builder .effcard{grid-template-columns:1fr}
+  #builder .tabs{overflow-x:auto}
+  #builder .modal{padding:12px}
+  #builder .modal>div{max-width:100%;min-width:0}
+  #schedule,#sections,#playlists,#controller{overflow-y:auto}
+  .schpage{height:auto!important;overflow:visible;padding:12px 12px 32px}
+  .prog{grid-template-columns:24px minmax(0,1fr) minmax(0,1fr);padding:10px 0;border-bottom:1px solid var(--line)}
+  .prog>*{min-width:0;max-width:100%}
+  .prog input[type=text]{grid-column:2/-1}
+  .nights{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .sl.wide{grid-template-columns:1fr}
+  .wg{top:calc(30px + env(safe-area-inset-top));bottom:env(safe-area-inset-bottom)}
+  .wg-in{padding-top:16px}
+  .wled-settings-head,.wled-connection,.wled-actions{flex-wrap:wrap}
+  .wled-settings-head>* ,.wled-connection>*{min-width:0!important;max-width:100%;flex-basis:100%!important}
+  .wled-output,.wled-location{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .wled-output>*{min-width:0}
+  .hm-head,.hm-line-row,.hm-toolbar{flex-wrap:wrap}
+  #themePop,#catPop{left:12px!important;right:12px!important;width:auto;max-width:calc(100vw - 24px)}
+  .toast{max-width:calc(100vw - 24px);width:max-content;overflow-wrap:anywhere}
+}
+@media (max-width:480px){
+  #gallery .grid{grid-template-columns:minmax(0,1fr)}
+  #simple .themes{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #simple .dirs{grid-template-columns:1fr}
+}
+@media (hover:none){
+  #simple .sw button{display:block;min-height:28px;width:28px}
+  .card .rnb{opacity:1}
+  #builder .ib{width:44px;height:44px}
+}
+@media (max-width:900px){
+  .plstep{grid-template-columns:24px minmax(0,1fr) 44px}
+  .plstep>select{grid-column:2/-1}
+  .plstep label{flex-wrap:wrap}
+  .part .ph,.part .rg{flex-wrap:wrap}
+  .secgrid,.plgrid{grid-template-columns:minmax(0,1fr)}
+  .schcard,.tonight,.momrow>*{min-width:0}
+  #builder .lane{grid-template-columns:100px minmax(0,1fr)}
+  #builder .ticks{grid-template-columns:100px minmax(0,1fr)}
+  #builder .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  #builder .chip{white-space:normal}
+}
