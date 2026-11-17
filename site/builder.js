@@ -900,7 +900,7 @@
   function litBy(i) { return LOOK.layers.slice().reverse().filter(L => { const o = PS.out && PS.out[L.id]; return L.on && o && o[i * 4 + 3] > 0 && Math.max(o[i * 4], o[i * 4 + 1], o[i * 4 + 2]) * o[i * 4 + 3] > .03; }); }
   function drawOverlay() {
     const ctx = SV.ctx, LEDS = H.leds(), L = layerById(sel), o = L && PS.out && PS.out[L.id];
-    if (showZone && o) { ctx.strokeStyle = 'rgba(255,179,71,.85)'; ctx.lineWidth = 1.2 * SV.dpr; for (let i = 0; i < N; i++) { if (o[i * 4 + 3] <= 0) continue; const [x, y] = px(LEDS[i]); ctx.beginPath(); ctx.arc(x, y, 6.5 * SV.dpr, 0, 6.2832); ctx.stroke(); } }
+    if (showZone && o) { ctx.strokeStyle = 'rgba(255,179,71,.85)'; ctx.lineWidth = 1.2 * SV.dpr; for (let i = 0; i < N; i++) { if (o[i * 4 + 3] <= 0 || !Number.isFinite(LEDS[i].x)) continue; const [x, y] = px(LEDS[i]); ctx.beginPath(); ctx.arc(x, y, 6.5 * SV.dpr, 0, 6.2832); ctx.stroke(); } }
     if (hoverBulb >= 0) { const [x, y] = px(LEDS[hoverBulb]); ctx.strokeStyle = 'rgba(255,225,170,.95)'; ctx.lineWidth = 1.6 * SV.dpr; ctx.beginPath(); ctx.arc(x, y, 9 * SV.dpr, 0, 6.2832); ctx.stroke(); }
   }
 

@@ -300,12 +300,14 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
  </head><body>
 
 
+<p id="controllerUnavailable" hidden>This controller profile could not be loaded. <a href="./#wiring">Open primary controller setup</a>.</p>
 <!-- =========================== GALLERY =========================== -->
 <section id="gallery" class="route">
   <aside id="mobileNav">
     <div class="brand">
       <div><img class="brand-logo" src="trimlight-logo.svg" alt="Trimlight"><small id="brandSub">HOME STUDIO · WLED</small></div>
     </div>
+    <label class="controller-select">WLED controller<select data-controller-select></select></label>
     <div class="navlbl">Looks</div>
     <nav class="nav" id="nav"></nav>
     <div class="navlbl" style="margin-top:14px">House</div>
@@ -323,7 +325,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
     <div class="side-foot" id="sideFoot">
       <div class="r"><span class="dot" id="footDot"></span><span id="footName">Connecting…</span></div>
       <div class="r" style="color:var(--dim);display:block" id="footSub"></div>
-      <label class="r" style="display:flex;gap:8px;align-items:center;margin-top:8px;cursor:pointer"><input type="checkbox" id="powerTgl" style="accent-color:#62d682"> House lights on</label>
+      <label class="r" style="display:flex;gap:8px;align-items:center;margin-top:8px;cursor:pointer"><input type="checkbox" id="powerTgl" style="accent-color:#62d682"> Controller power</label>
     </div>
   </aside>
   <div class="gmain">
@@ -455,7 +457,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
     <div class="secgrid">
       <div><div class="tcv secstage"><canvas id="secCv"></canvas><div class="tlab"><small>Preview</small><b id="secTitle">Split look</b></div></div>
         <div class="secstrip" id="secStrip"></div>
-        <div class="secsplits"><span>Split:</span><button data-split="outputs">By WLED output</button><button data-split="saved">Saved roof sections</button><button data-split="add">＋ Add a divider</button></div>
+        <div class="secsplits"><span>Split:</span><button data-split="outputs">By WLED output</button><button data-split="saved">Saved roof sections</button><button data-split="landscape" hidden>Landscape sections</button><button data-split="add">＋ Add a divider</button></div>
       </div>
       <div class="schcard"><div class="sl"><span>Name</span><input type="text" id="secName" value="My split look"><span></span></div>
         <div id="secParts"></div>
@@ -681,17 +683,11 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 </style>
 <script src="catalog.js"></script>
 <script src="tlfx.js"></script>
-<script src="builder.js?v=studio-power-1"></script>
+<script src="builder.js?v=landscape-1"></script>
 <script src="motions.js"></script>
 <script src="simple.js"></script>
 <script src="ask.js"></script>
 <script src="demo-data.js"></script>
-<script src="/api/bootstrap.js"></script>
-<script src="wled-settings.js"></script>
-<script src="house-mapper.js?v=studio-stability-1"></script>
-<script src="demo-shim.js?v=studio-stability-1"></script>
-<script src="app.js?v=studio-mobile-1"></script>
-<script src="backup.js?v=studio-stability-1"></script>
 
 
 
@@ -743,6 +739,11 @@ body:before{content:"";position:fixed;inset:0 0 auto;height:5px;background:var(-
 <section class="wg" id="wiringGuide" hidden aria-label="Wiring and setup guide">
   <div class="wg-in">
     <div class="wg-top"><div><h1>WLED connection &amp; setup</h1><p class="lede">Connect this browser to a WLED controller on the same local network, then confirm the number of LEDs and color order for each output.</p></div><button class="back" type="button" id="wgClose">← Back to the app</button></div>
+    <div class="wled-settings controller-profiles">
+      <label>WLED controller<select id="setupController" data-controller-select></select></label>
+      <form id="addController" hidden><label>New controller name<input name="name" required maxlength="40" placeholder="e.g. Far-side landscape"></label><button class="btn" type="submit">Add controller</button></form>
+      <p id="controllerProfileStatus" role="status" aria-live="polite"></p>
+    </div>
     <div class="wled-settings">
       <div class="wled-settings-head"><div><h2>Controller connection</h2><p>Controller address, home photo, and channel settings are saved with this installation.</p></div><label>Mode<select id="wledMode"><option value="demo">Demo preview</option><option value="wled">Real WLED controller</option></select></label></div>
       <div class="wled-connection"><label>Controller IP address or hostname<input id="wledAddress" type="text" placeholder="e.g. 192.168.1.50 or wled.local" autocomplete="url" spellcheck="false"></label><label>Controller channel count<select id="wledChannelCount"><option value="2">2 channels</option><option value="4" selected>4 channels</option><option value="6">6 channels</option></select></label><button class="btn" id="testWled" type="button">Test connection</button></div>
@@ -750,14 +751,14 @@ body:before{content:"";position:fixed;inset:0 0 auto;height:5px;background:var(-
       <div class="wled-location"><label>Latitude<input id="wledLatitude" type="number" min="-66.6" max="66.6" step="0.0001" placeholder="from WLED"></label><label>Longitude<input id="wledLongitude" type="number" min="-180" max="180" step="0.0001" placeholder="from WLED"></label><p>Used for local sunset previews and WLED sunset timers. The timezone remains the one configured in WLED.</p></div>
       <div id="wledOutputs" class="wled-outputs"></div>
       <button class="map-run" id="addDemoOutput" type="button">＋ Add populated channel</button>
-      <div class="house-mapper" id="houseMapper" aria-label="Multi-side house photo and roofline mapper"></div>
       <div class="wled-actions"><button class="btn" id="demoReset" type="button">Reset demo</button><button class="btn push" id="applyWled" type="button">Apply settings &amp; connect</button></div>
       <p id="wledStatus" class="wled-status" role="status" aria-live="polite">Choose demo mode or enter a WLED address and test the connection.</p>
+      <div class="house-mapper" id="houseMapper" aria-label="Property lighting mapper"></div>
       <div class="studio-backup" id="studioBackup">
-        <div><h3>Backup &amp; restore</h3><p>Export patterns, schedules, roof sections, controller setup, photos, and traced rooflines to a JSON file.</p></div>
+        <div><h3>Backup &amp; restore</h3><p>Export the selected controller’s looks, schedules, setup, photos, and lighting traces.</p></div>
         <div class="studio-backup-actions"><button class="btn" id="backupExport" type="button">Download backup</button><label class="backup-import">Restore backup<input id="backupImport" type="file" accept=".json,application/json"></label></div>
         <p id="backupStatus" class="wled-status" role="status" aria-live="polite"></p>
-        <small>Restore replaces the app’s current saved data. It restores this app’s controller settings; it does not write configuration back to the WLED device.</small>
+        <small>Restore replaces the selected controller profile’s saved data in Studio.</small>
       </div>
       <p class="wled-caution"><b>Network requirement:</b> WLED's browser API uses HTTP and WebSocket. Open this app over HTTP on the same trusted LAN; an HTTPS-hosted page cannot connect directly to WLED's unencrypted <code>ws://</code> socket. Never expose the controller API to the public internet.</p>
     </div>
@@ -778,5 +779,7 @@ body:before{content:"";position:fixed;inset:0 0 auto;height:5px;background:var(-
 </script>
 
 <link rel="stylesheet" href="mobile.css?v=1">
+<link rel="stylesheet" href="landscape.css?v=1">
+<script type="module" src="controllers.js?v=1"></script>
 <script src="mobile.js?v=1"></script>
 </body></html>

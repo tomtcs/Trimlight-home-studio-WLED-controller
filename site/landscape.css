@@ -1,0 +1,28 @@
+.controller-select, .controller-profiles form { display: grid; gap: 8px; }
+.controller-select { color: var(--dim); font-size: 12px; margin: 8px 4px 14px; }
+.controller-select select { width: 100%; min-height: 40px; border: 1px solid #435047; background: #141a17; color: #f4f7f5; border-radius: 8px; padding: 6px 8px; }
+.controller-profiles { display: grid; grid-template-columns: 1fr 2fr; align-items: end; gap: 12px; }
+.controller-profiles form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+#controllerProfileStatus { grid-column: 1 / -1; margin: 0; color: #f4b2a9; }
+#controllerProfileStatus:empty { display: none; }
+#controllerUnavailable { padding: 46px 16px 16px; }
+.hm-landscape-fields { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 2fr) 1fr 1fr; gap: 9px; }
+.hm-landscape-fields p { grid-column: 1 / -1; margin: 0; }
+.hm-legend .landscape { color: #ffc46b; }
+.hm-line-row { flex-wrap: wrap; }
+.hm-zone-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; width: 100%; }
+.wled-settings .hm-landscape-fields label,
+.wled-settings .hm-zone-controls label { min-width: 0; }
+.wled-settings .hm-landscape-fields input,
+.wled-settings .hm-landscape-fields select { box-sizing: border-box; max-width: 100%; }
+.wled-settings .hm-zone-controls label { flex: 0 1 96px; }
+.wled-settings .hm-line-row > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.wled-settings .hm-zone-controls input { width: 100%; min-width: 0; }
+.hm-zone-controls button { min-height: 36px; }
+@media (max-width: 760px) {
+  .controller-profiles { grid-template-columns: minmax(0, 1fr); }
+  .hm-landscape-fields { grid-template-columns: 1fr 1fr; }
+  .hm-landscape-fields label:first-child { grid-column: 1 / -1; }
+  .hm-zone-controls button { min-height: 44px; }
+  .hm-photo { min-height: 0; }
+}

@@ -9,26 +9,83 @@ import sqlite3
 import socket
 import threading
 import time
+from dataclasses import dataclass, field
 from contextlib import contextmanager, nullcontext
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 DB_PATH = os.environ.get("STUDIO_DB", "/data/studio.sqlite3")
 MAX_BODY = 8 * 1024 * 1024
 DEFAULT_HOUSE_SIDES = [{"id": "front", "label": "Front"}, {"id": "right", "label": "Right side"}, {"id": "rear", "label": "Rear"}, {"id": "left", "label": "Left side"}, {"id": "shed", "label": "Shed"}]
 DEFAULT_SETTINGS = {"mode": "demo", "host": "", "channelCount": 4, "outputs": [], "photo": "", "photoSize": [2000, 1500], "houseViews": {}, "houseSides": DEFAULT_HOUSE_SIDES, "timezone": "UTC"}
-SCHEDULE_STATUS = {"enabled": False, "state": "disabled", "message": "", "updated": None, "program": None, "date": None}
-SCHEDULE_STATUS_LOCK = threading.Lock()
+MAX_CONTROLLERS = 8
+PRIMARY = "primary"
 SCHEDULE_WRITE_LOCK = threading.Lock()
-SCHEDULE_LAST_KEY = None
-SCHEDULE_RETRY_AT = 0
-SCHEDULE_RETRY_DELAY = 30
-SCHEDULE_RETRY_KEY = None
-SCHEDULE_AUXILIARY_KEY = None
+
+
+@dataclass
+class SchedulerRuntime:
+    status: dict = field(default_factory=lambda: {
+        "enabled": False, "state": "disabled", "message": "", "updated": None, "program": None, "date": None,
+    })
+    last_key: str | None = None
+    auxiliary_key: str | None = None
+    retry_key: tuple | None = None
+    retry_at: float = 0
+    retry_delay: int = 30
+
+    def update(self, **fields):
+        self.status.update(fields)
+        return dict(self.status)
+
+    def reset(self):
+        self.last_key = self.auxiliary_key = self.retry_key = None
+        self.retry_at = 0
+        self.retry_delay = 30
+
+
+SCHEDULERS = {}
+
+
+def scheduler_runtime(controller=PRIMARY):
+    if controller not in SCHEDULERS:
+        SCHEDULERS[controller] = SchedulerRuntime()
+    return SCHEDULERS[controller]
+
+
+def controller_key(controller, key):
+    return key if controller == PRIMARY else f"controller:{controller}:{key}"
+
+
+def controller_profiles(conn):
+    return {PRIMARY: "Primary controller", **(read_state(conn, "controllers") or {})}
+
+
+def controller_id(conn, request_url):
+    ids = parse_qs(urlsplit(request_url).query, keep_blank_values=True).get("controller", [PRIMARY])
+    if len(ids) != 1 or ids[0] not in controller_profiles(conn):
+        raise LookupError("This WLED controller profile does not exist.")
+    return ids[0]
+
+
+def validate_controller_address(conn, controller, settings):
+    if settings.get("mode") != "wled":
+        return
+    address = settings.get("host", "").lower().rstrip(".")
+    mac = settings.get("mac")
+    for other in controller_profiles(conn):
+        if other == controller:
+            continue
+        existing = read_state(conn, controller_key(other, "settings")) or {}
+        if existing.get("mode") == "wled" and (
+            address == existing.get("host", "").lower().rstrip(".") or mac and mac == existing.get("mac")
+        ):
+            raise ValueError("This WLED device is already assigned to another controller profile.")
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -71,23 +128,21 @@ def write_state(conn, key, value):
     )
 
 
-def scheduler_status(**updates):
-    with SCHEDULE_STATUS_LOCK:
-        SCHEDULE_STATUS.update(updates)
-        return dict(SCHEDULE_STATUS)
-
-
 def wled_base(host):
     """Resolve only local controller addresses; this service must not become an SSRF proxy."""
-    host = str(host or "").strip().strip("[]")
+    host = str(host or "").strip()
     if not host or len(host) > 255 or any(c in host for c in "/?#@\\"):
         raise ValueError("Set a valid local WLED controller address in Wiring & setup.")
+    parsed = urlsplit("http://" + (f"[{host}]" if host.count(":") > 1 and "[" not in host else host))
+    host, port = parsed.hostname, parsed.port or 80
+    if not host or "%" in host:
+        raise ValueError("Set a valid local WLED controller address in Wiring & setup.")
     try:
-        literal = ipaddress.ip_address(host.split("%", 1)[0])
+        literal = ipaddress.ip_address(host)
         addresses = [literal]
     except ValueError:
         try:
-            results = socket.getaddrinfo(host, 80, type=socket.SOCK_STREAM)
+            results = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
         except OSError as exc:
             raise ValueError("The API container cannot resolve the WLED address: " + str(exc)) from exc
         addresses = []
@@ -100,7 +155,8 @@ def wled_base(host):
         raise ValueError("The scheduler only connects to WLED controllers on a private local network.")
     # Connect to the validated address without resolving the hostname again.
     address = next((address for address in addresses if address.version == 4), addresses[0])
-    return f"http://[{address}]" if address.version == 6 else f"http://{address}"
+    destination = f"[{address}]" if address.version == 6 else str(address)
+    return f"http://{destination}" + (f":{port}" if port != 80 else "")
 
 
 def wled_json(base, path, body=None):
@@ -284,20 +340,20 @@ def store_wled_preset(base, slot, command, non_applying, *, existing=None):
     return True
 
 
-def scheduler_enabled(conn):
-    return read_state(conn, "scheduler_enabled") is not False
+def scheduler_enabled(conn, controller=PRIMARY):
+    return read_state(conn, controller_key(controller, "scheduler_enabled")) is not False
 
 
-def scheduler_status_for(settings, enabled):
+def scheduler_status_for(settings, enabled, runtime):
     configured = settings.get("mode") == "wled" and bool(settings.get("host"))
     fields = {"enabled": enabled, "settingsMode": settings.get("mode", "demo"), "controllerConfigured": configured}
     if not enabled:
-        return scheduler_status(**fields, state="paused", message="Calendar writes are paused. WLED keeps its existing timers.", program=None, date=None)
+        return runtime.update(**fields, state="paused", message="Calendar writes are paused. WLED keeps its existing timers.", program=None, date=None)
     if not configured:
-        return scheduler_status(**fields, state="disabled", message="Save a WLED controller address in Wiring & setup.", program=None, date=None)
-    if SCHEDULE_STATUS["state"] in {"paused", "disabled"}:
-        return scheduler_status(**fields, state="starting", message="Waiting for the scheduler to check the saved WLED controller.")
-    return scheduler_status(**fields)
+        return runtime.update(**fields, state="disabled", message="Save a WLED controller address in Wiring & setup.", program=None, date=None)
+    if runtime.status["state"] in {"paused", "disabled"}:
+        return runtime.update(**fields, state="starting", message="Waiting for the scheduler to check the saved WLED controller.")
+    return runtime.update(**fields)
 
 
 def apply_scheduled_preset(host, selection):
@@ -365,66 +421,71 @@ def validate_timers(timers):
         raise ValueError("Invalid WLED timers.")
 
 
-def scheduler_tick():
-    global SCHEDULE_LAST_KEY, SCHEDULE_RETRY_AT, SCHEDULE_RETRY_DELAY, SCHEDULE_RETRY_KEY, SCHEDULE_AUXILIARY_KEY
+def scheduler_tick(controller=PRIMARY):
     with SCHEDULE_WRITE_LOCK:
         with database() as conn:
-            settings = read_state(conn, "settings") or DEFAULT_SETTINGS
-            app = read_state(conn, "app") or {}
-            enabled = scheduler_enabled(conn)
-        status = scheduler_status_for(settings, enabled)
+            if controller not in controller_profiles(conn):
+                return
+            settings = read_state(conn, controller_key(controller, "settings")) or DEFAULT_SETTINGS
+            app = read_state(conn, controller_key(controller, "app")) or {}
+            enabled = scheduler_enabled(conn, controller)
+        runtime = scheduler_runtime(controller)
+        status = scheduler_status_for(settings, enabled, runtime)
         if not enabled or not status["controllerConfigured"]:
-            SCHEDULE_LAST_KEY = None
-            SCHEDULE_AUXILIARY_KEY = None
+            runtime.last_key = None
+            runtime.auxiliary_key = None
             return
         fingerprint = None
         try:
             schedule = app.get("schedule") or {}
             selection = scheduled_selection(app, datetime.now().astimezone(), settings.get("timezone", "UTC"))
             if schedule.get("onMode") == "none" or selection["body"] is None:
-                SCHEDULE_LAST_KEY = None
-                scheduler_status(state="ready", message="No automatic evening preset is scheduled.", program=None, date=selection["date"])
+                runtime.last_key = None
+                runtime.update(state="ready", message="No automatic evening preset is scheduled.", program=None, date=selection["date"])
                 return
             host = settings["host"]
             auxiliary = auxiliary_presets(schedule)
             auxiliary_key = json.dumps([host, auxiliary], sort_keys=True, ensure_ascii=False)
             evening_key = make_schedule_fingerprint(host, selection)
             fingerprint = (evening_key, auxiliary_key)
-            if fingerprint == SCHEDULE_RETRY_KEY and time.monotonic() < SCHEDULE_RETRY_AT:
+            if fingerprint == runtime.retry_key and time.monotonic() < runtime.retry_at:
                 return
-            if fingerprint != SCHEDULE_RETRY_KEY:
-                SCHEDULE_RETRY_DELAY = 30
-            if evening_key == SCHEDULE_LAST_KEY and auxiliary_key == SCHEDULE_AUXILIARY_KEY:
-                scheduler_status(date=selection["date"], program=selection["program"])
+            if fingerprint != runtime.retry_key:
+                runtime.retry_delay = 30
+            if evening_key == runtime.last_key and auxiliary_key == runtime.auxiliary_key:
+                runtime.update(date=selection["date"], program=selection["program"])
                 return
-            if auxiliary_key != SCHEDULE_AUXILIARY_KEY and auxiliary:
+            if auxiliary_key != runtime.auxiliary_key and auxiliary:
                 base = wled_base(host)
                 info = wled_json(base, "/json/info")
                 store_preset_batch(base, auxiliary, info.get("studioPresetStore") is True)
-            SCHEDULE_AUXILIARY_KEY = auxiliary_key
-            changed = evening_key != SCHEDULE_LAST_KEY and apply_scheduled_preset(host, selection)
-            SCHEDULE_LAST_KEY = evening_key
-            SCHEDULE_RETRY_AT = 0
-            SCHEDULE_RETRY_DELAY = 30
-            SCHEDULE_RETRY_KEY = None
+            runtime.auxiliary_key = auxiliary_key
+            changed = evening_key != runtime.last_key and apply_scheduled_preset(host, selection)
+            runtime.last_key = evening_key
+            runtime.retry_at = 0
+            runtime.retry_delay = 30
+            runtime.retry_key = None
             action = "Updated" if changed else "Verified"
-            scheduler_status(state="active" if selection["program"] else "ready",
+            runtime.update(state="active" if selection["program"] else "ready",
                              message=f'{action} {selection["name"]} in WLED preset {selection["slot"]}.',
                              updated=datetime.now().astimezone().isoformat(timespec="seconds"),
                              program=selection["program"], date=selection["date"])
         except (ValueError, TypeError, KeyError, AttributeError) as exc:
-            SCHEDULE_RETRY_KEY = fingerprint
-            SCHEDULE_RETRY_AT = time.monotonic() + SCHEDULE_RETRY_DELAY
-            scheduler_status(state="error", message=f"{str(exc)[:250]} Retrying in {SCHEDULE_RETRY_DELAY} seconds.")
-            SCHEDULE_RETRY_DELAY = min(SCHEDULE_RETRY_DELAY * 2, 900)
+            runtime.retry_key = fingerprint
+            runtime.retry_at = time.monotonic() + runtime.retry_delay
+            runtime.update(state="error", message=f"{str(exc)[:250]} Retrying in {runtime.retry_delay} seconds.")
+            runtime.retry_delay = min(runtime.retry_delay * 2, 900)
 
 
 def scheduler_loop():
     while True:
         try:
-            scheduler_tick()
+            with database() as conn:
+                controllers = list(controller_profiles(conn))
+            for controller in controllers:
+                scheduler_tick(controller)
         except sqlite3.Error as exc:
-            scheduler_status(state="error", message=str(exc)[:300])
+            print(f"WLED scheduler database error: {exc}", flush=True)
         time.sleep(5)
 
 
@@ -434,9 +495,12 @@ def validate_settings(settings):
     mode = settings.get("mode", "demo")
     if mode not in ("demo", "wled"):
         raise ValueError("Mode must be demo or wled.")
-    host = str(settings.get("host", ""))
-    if len(host) > 255 or any(ch in host for ch in "/?#@\\") or host.lower().startswith(("http:", "https:")):
+    host = settings.get("host", "")
+    if not isinstance(host, str) or len(host) > 255 or any(ch in host for ch in "/?#@\\") or host.lower().startswith(("http:", "https:")):
         raise ValueError("Controller address must be a hostname or IP only.")
+    mac = settings.get("mac")
+    if mac is not None and (not isinstance(mac, str) or not re.fullmatch(r"[0-9a-f]{12}", mac)):
+        raise ValueError("The WLED hardware address is invalid.")
     timezone = settings.get("timezone", "UTC")
     if not isinstance(timezone, str) or len(timezone) > 100:
         raise ValueError("Time zone must be a valid IANA time-zone name.")
@@ -445,7 +509,9 @@ def validate_settings(settings):
     except (ZoneInfoNotFoundError, ValueError) as exc:
         raise ValueError("Time zone must be a valid IANA time-zone name.") from exc
     outputs = settings.get("outputs", [])
-    channel_count = settings.get("channelCount", len(outputs) if isinstance(outputs, list) else 4)
+    channels = len(outputs) if isinstance(outputs, list) else 0
+    inferred_capacity = 4 if channels == 0 else next((n for n in (2, 4, 6) if channels <= n), 6)
+    channel_count = settings.get("channelCount", inferred_capacity)
     if channel_count not in (2, 4, 6):
         raise ValueError("Controller channel count must be 2, 4, or 6.")
     if not isinstance(outputs, list) or len(outputs) > 6:
@@ -456,6 +522,8 @@ def validate_settings(settings):
     for output in outputs:
         if not isinstance(output, dict):
             raise ValueError("Each output must be an object.")
+        if output.get("use", "roof") not in ("roof", "landscape"):
+            raise ValueError("Select roofline or landscape lighting for each output.")
         leds = output.get("leds")
         if not isinstance(leds, int) or isinstance(leds, bool) or not 1 <= leds <= 10000:
             raise ValueError("Each output must have between 1 and 10,000 LEDs.")
@@ -487,6 +555,7 @@ def validate_settings(settings):
     if not isinstance(house_views, dict) or set(house_views) - side_ids:
         raise ValueError("House views must match the configured elevations.")
     photo_total = 0
+    landscape_ranges = {}
     for side, view in house_views.items():
         if not isinstance(view, dict):
             raise ValueError("Each house view must be an object.")
@@ -507,18 +576,120 @@ def validate_settings(settings):
             if not isinstance(line, dict) or not isinstance(line.get("id"), str) or not 1 <= len(line["id"]) <= 128 or line["id"] in ids:
                 raise ValueError("Each traced section must have a unique identifier.")
             ids.add(line["id"])
-            if line.get("kind") not in ("edge", "ridge") or not isinstance(line.get("name", ""), str) or len(line.get("name", "")) > 48:
-                raise ValueError("Traced sections need a name and a valid roof edge or ridge type.")
+            if line.get("kind") not in ("edge", "ridge", "landscape") or not isinstance(line.get("name", ""), str) or len(line.get("name", "")) > 48:
+                raise ValueError("Traced sections need a name and a valid lighting type.")
             points = line.get("points")
-            if not isinstance(points, list) or not 2 <= len(points) <= 100:
-                raise ValueError("Each traced section must contain 2 to 100 points.")
+            required_points = 1 if line["kind"] == "landscape" else 2
+            if not isinstance(points, list) or not required_points <= len(points) <= 100:
+                raise ValueError(f"This section must contain {required_points} to 100 points.")
             for point in points:
                 if not isinstance(point, list) or len(point) != 2 or any(not isinstance(n, (int, float)) or isinstance(n, bool) or not math.isfinite(n) or not 0 <= n <= 100 for n in point):
-                    raise ValueError("Traced roofline points must be within the elevation photo.")
+                    raise ValueError("Traced points must be within the elevation photo.")
             wires = line.get("wireSegments", [])
             if not isinstance(wires, list) or len(wires) > len(points) - 1 or any(not isinstance(n, int) or isinstance(n, bool) or not 0 <= n < len(points) - 1 for n in wires) or len(set(wires)) != len(wires):
-                raise ValueError("Wire-only links must refer to unique segments in the traced roofline.")
+                raise ValueError("Wire-only links must refer to unique segments in the trace.")
+            if line["kind"] == "landscape":
+                output, first, last = line.get("output"), line.get("first"), line.get("last")
+                if any(type(value) is not int for value in (output, first, last)) or not (
+                    1 <= output <= len(outputs) and 1 <= first <= last <= outputs[output - 1]["leds"]
+                ):
+                    raise ValueError("Landscape bulb ranges must be within a configured output.")
+                if len(points) == 1 and first != last:
+                    raise ValueError("A single landscape point must map to one bulb.")
+                if len(points) > 1:
+                    wire_indices = set(wires)
+                    spans = sum(i not in wire_indices and (i == 0 or i - 1 in wire_indices) for i in range(len(points) - 1))
+                    if not 1 <= spans <= last - first + 1:
+                        raise ValueError("A landscape trace needs at least one bulb per lit span.")
+                ranges = landscape_ranges.setdefault(output, [])
+                if any(first <= end and last >= start for start, end in ranges):
+                    raise ValueError("Landscape bulb ranges on the same output must not overlap.")
+                ranges.append((first, last))
     return settings
+
+
+
+def landscape_command(state, start, stop, color, brightness, limit):
+    if brightness and not state.get("on"):
+        raise ValueError("Turn on controller power before lighting a landscape section.")
+    if state.get("pl", -1) >= 0 or state.get("live"):
+        raise ValueError("Stop the playlist or live input before adjusting a landscape section.")
+    segments = [seg for seg in state.get("seg", []) if seg["stop"] > seg["start"]]
+    overlapping = [seg for seg in segments if seg["start"] < stop and seg["stop"] > start]
+    used = {seg["id"] for seg in state.get("seg", [])}
+    free = iter(i for i in range(limit) if i not in used)
+
+    def allocate():
+        slot = next(free, None)
+        if slot is None:
+            raise ValueError("WLED has no free segment slots for this landscape section.")
+        return slot
+
+    zone = {"start": start, "stop": stop, "on": bool(brightness)}
+    if brightness:
+        rgb = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+        zone.update(fx=0, pal=0, col=[rgb, [0, 0, 0], [0, 0, 0]], bri=brightness,
+                    grp=1, spc=0, of=0, rev=False, mi=False)
+    if not overlapping:
+        return [{**zone, "id": allocate()}] if brightness else []
+    if len(overlapping) == 1:
+        seg = overlapping[0]
+        if seg["start"] == start and seg["stop"] == stop and not any(seg.get(k) for k in ("bm", "tlsbm", "m12")):
+            return [{**zone, "id": seg["id"]}]
+        # A uniform solid can be split without changing the look of its other bulbs.
+        if (seg["start"] <= start and stop <= seg["stop"] and seg.get("fx") == 0
+            and seg.get("grp", 1) == 1 and not any(seg.get(k) for k in ("spc", "of", "bm", "tlsbm", "m12", "fe", "mod", "tlc"))):
+            old = {key: value for key, value in seg.items() if key in SEGMENT_FIELDS}
+            pieces = []
+            if seg["start"] < start:
+                pieces.append({**old, "stop": start})
+            if stop < seg["stop"]:
+                pieces.append({**old, "start": stop, "id": allocate() if pieces else seg["id"]})
+            if pieces:
+                return [*pieces, {**zone, "id": allocate()}]
+    raise ValueError("This section crosses active effects or layers. Apply a Section look with separate landscape ranges first.")
+
+
+def control_landscape(settings, request):
+    if not isinstance(request, dict) or not isinstance(request.get("side"), str) or not isinstance(request.get("line"), str):
+        raise ValueError("Choose a saved landscape section.")
+    view = settings.get("houseViews", {}).get(request.get("side"), {})
+    line = next((line for line in view.get("lines", []) if line["id"] == request.get("line") and line["kind"] == "landscape"), None)
+    if line is None:
+        raise ValueError("Choose a saved landscape section.")
+    color, brightness = request.get("color"), request.get("brightness")
+    if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color) or type(brightness) is not int or not 0 <= brightness <= 255:
+        raise ValueError("Choose a color and a brightness from 0 to 255.")
+    outputs = settings["outputs"]
+    offset = sum(bus["leds"] for bus in outputs[:line["output"] - 1])
+    start, stop = offset + line["first"] - 1, offset + line["last"]
+    if settings.get("mode") == "demo":
+        state = request.get("demoState")
+        if not isinstance(state, dict):
+            raise ValueError("The demo controller is unavailable.")
+        return {"ok": True, "segments": landscape_command(state, start, stop, color, brightness, 32)}
+    base = wled_base(settings["host"])
+    info = wled_json(base, "/json/info")
+    config = wled_json(base, "/json/cfg")
+    bus = config.get("hw", {}).get("led", {}).get("ins", [])
+    if len(bus) != len(outputs) or any(
+        item.get("start") != sum(out["leds"] for out in outputs[:index]) or item.get("len") != outputs[index]["leds"]
+        for index, item in enumerate(bus)
+    ):
+        raise ValueError("WLED output counts or start positions changed. Test and save the controller setup again.")
+    state = wled_json(base, "/json/state")
+    if info.get("live") or info.get("leds", {}).get("matrix"):
+        raise ValueError("Landscape control requires a 1D output with no live input.")
+    limit = min(64, int(info.get("leds", {}).get("maxseg") or 32))
+    segments = landscape_command(state, start, stop, color, brightness, limit)
+    if segments:
+        wled_json(base, "/json/state", {"seg": segments, "udpn": {"nn": True}})
+        verified = wled_json(base, "/json/state")
+        by_id = {seg["id"]: seg for seg in verified.get("seg", [])}
+        applied = [by_id.get(seg["id"]) for seg in segments]
+        if not preset_matches({"seg": applied}, {"seg": segments}):
+            raise ValueError("WLED received the update but did not verify the landscape segment.")
+    return {"ok": True}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -538,9 +709,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def send_bootstrap(self):
         with database() as conn:
-            app = read_state(conn, "app")
-            settings = read_state(conn, "settings")
-        state = {"app": app, "settings": settings, "has_app": app is not None, "has_settings": settings is not None}
+            controller = controller_id(conn, self.path)
+            app = read_state(conn, controller_key(controller, "app"))
+            settings = read_state(conn, controller_key(controller, "settings"))
+            profiles = controller_profiles(conn)
+        state = {"app": app, "settings": settings, "has_app": app is not None,
+                 "has_settings": settings is not None, "controller": controller, "controllers": profiles}
         payload = json.dumps(state, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
         raw = ("window.TL_SERVER_STATE=" + payload + ";\n").encode("utf-8")
         self.send_response(200)
@@ -562,55 +736,85 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             self.send_json({"ok": True})
             return
-        if path == "/api/bootstrap.js":
-            self.send_bootstrap()
-            return
-        if path == "/api/scheduler/status":
-            with database() as conn:
-                settings = read_state(conn, "settings") or DEFAULT_SETTINGS
-                enabled = scheduler_enabled(conn)
-            self.send_json(scheduler_status_for(settings, enabled))
-            return
-        if path in ("/api/app", "/api/settings"):
-            key = "app" if path == "/api/app" else "settings"
-            with database() as conn:
-                value = read_state(conn, key)
-            self.send_json(value if value is not None else ({} if key == "app" else DEFAULT_SETTINGS))
-            return
-        self.send_json({"ok": False, "error": "Not found"}, 404)
+        try:
+            if path == "/api/bootstrap.js":
+                self.send_bootstrap()
+                return
+            if path in ("/api/app", "/api/settings", "/api/scheduler/status"):
+                lock = SCHEDULE_WRITE_LOCK if path == "/api/scheduler/status" else nullcontext()
+                with lock, database() as conn:
+                    controller = controller_id(conn, self.path)
+                    if path == "/api/scheduler/status":
+                        settings = read_state(conn, controller_key(controller, "settings")) or DEFAULT_SETTINGS
+                        value = scheduler_status_for(settings, scheduler_enabled(conn, controller), scheduler_runtime(controller))
+                    else:
+                        key = path.rsplit("/", 1)[-1]
+                        value = read_state(conn, controller_key(controller, key))
+                        if value is None:
+                            value = {} if key == "app" else DEFAULT_SETTINGS
+                self.send_json(value)
+                return
+            self.send_json({"ok": False, "error": "Not found"}, 404)
+        except LookupError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 404)
 
     def do_POST(self):
         path = urlsplit(self.path).path
-        if path not in ("/api/app", "/api/settings", "/api/restore", "/api/schedule/apply", "/api/schedule/save", "/api/scheduler/status", "/api/controller/presets", "/api/controller/push"):
+        if path not in ("/api/app", "/api/settings", "/api/restore", "/api/schedule/apply", "/api/schedule/save", "/api/scheduler/status", "/api/controller/presets", "/api/controller/push", "/api/controllers", "/api/controller/landscape"):
             self.send_json({"ok": False, "error": "Not found"}, 404)
             return
         try:
             incoming = self.body()
+            if path == "/api/controllers":
+                if not isinstance(incoming, dict) or not isinstance(incoming.get("name"), str):
+                    raise ValueError("Enter a controller name.")
+                name = incoming["name"].strip()
+                if not 1 <= len(name) <= 40:
+                    raise ValueError("Enter a controller name from 1 to 40 characters.")
+                with SCHEDULE_WRITE_LOCK, database() as conn:
+                    profiles = controller_profiles(conn)
+                    if len(profiles) >= MAX_CONTROLLERS:
+                        raise ValueError(f"Studio supports up to {MAX_CONTROLLERS} controller profiles.")
+                    if name.casefold() in {label.casefold() for label in profiles.values()}:
+                        raise ValueError("Choose a unique controller name.")
+                    profiles.pop(PRIMARY)
+                    controller = uuid4().hex
+                    profiles[controller] = name
+                    write_state(conn, "controllers", profiles)
+                self.send_json({"ok": True, "id": controller}, 201)
+                return
+            with database() as conn:
+                controller = controller_id(conn, self.path)
+            settings_key = controller_key(controller, "settings")
+            app_key = controller_key(controller, "app")
             if path == "/api/scheduler/status":
-                global SCHEDULE_LAST_KEY, SCHEDULE_RETRY_AT, SCHEDULE_RETRY_DELAY, SCHEDULE_RETRY_KEY, SCHEDULE_AUXILIARY_KEY
                 if not isinstance(incoming, dict) or type(incoming.get("enabled")) is not bool:
                     raise ValueError("Choose whether the calendar scheduler is enabled.")
                 with SCHEDULE_WRITE_LOCK, database() as conn:
-                    write_state(conn, "scheduler_enabled", incoming["enabled"])
-                    settings = read_state(conn, "settings") or DEFAULT_SETTINGS
-                    SCHEDULE_LAST_KEY = None
-                    SCHEDULE_AUXILIARY_KEY = None
+                    write_state(conn, controller_key(controller, "scheduler_enabled"), incoming["enabled"])
+                    settings = read_state(conn, settings_key) or DEFAULT_SETTINGS
+                    runtime = scheduler_runtime(controller)
+                    runtime.reset()
                     if incoming["enabled"]:
-                        scheduler_status(state="starting", message="Waiting for the scheduler to check the saved WLED controller.")
-                    SCHEDULE_RETRY_AT = 0
-                    SCHEDULE_RETRY_DELAY = 30
-                    SCHEDULE_RETRY_KEY = None
-                    status = scheduler_status_for(settings, incoming["enabled"])
+                        runtime.update(state="starting", message="Waiting for the scheduler to check the saved WLED controller.")
+                    status = scheduler_status_for(settings, incoming["enabled"], runtime)
                 self.send_json(status)
+                return
+            if path == "/api/controller/landscape":
+                with SCHEDULE_WRITE_LOCK:
+                    with database() as conn:
+                        settings = read_state(conn, settings_key) or DEFAULT_SETTINGS
+                    result = control_landscape(settings, incoming)
+                self.send_json(result)
                 return
             if path in ("/api/schedule/apply", "/api/schedule/save", "/api/controller/presets", "/api/controller/push"):
                 if not isinstance(incoming, dict):
                     raise ValueError("Preset request must be a JSON object.")
                 with SCHEDULE_WRITE_LOCK:
                     with database() as conn:
-                        settings = read_state(conn, "settings") or DEFAULT_SETTINGS
-                        app = read_state(conn, "app") or {}
-                        enabled = scheduler_enabled(conn)
+                        settings = read_state(conn, settings_key) or DEFAULT_SETTINGS
+                        app = read_state(conn, app_key) or {}
+                        enabled = scheduler_enabled(conn, controller)
                     if path == "/api/schedule/save" and app.get("schedule") != incoming.get("expectedSchedule"):
                         self.send_json({"ok": False, "error": "Another browser changed the schedule. Reload before saving again."}, 409)
                         return
@@ -666,7 +870,7 @@ class Handler(BaseHTTPRequestHandler):
                                 info = wled_json(base, "/json/info")
                                 command = preset_command(selection["body"], "Studio · " + selection["name"])
                                 changed = store_wled_preset(base, selection["slot"], command, info.get("studioPresetStore") is True)
-                                SCHEDULE_LAST_KEY = make_schedule_fingerprint(host, selection)
+                                scheduler_runtime(controller).last_key = make_schedule_fingerprint(host, selection)
                                 result = {"ok": True, "changed": changed, "tonight": f'Preset {selection["slot"]} verified'}
                     else:
                         batch = incoming.get("presets")
@@ -693,11 +897,10 @@ class Handler(BaseHTTPRequestHandler):
                             count = configure_timers(base, incoming.get("timers"), incoming.get("location"))
                             with database() as conn:
                                 conn.execute("BEGIN IMMEDIATE")
-                                latest = read_state(conn, "app") or {}
+                                latest = read_state(conn, app_key) or {}
                                 latest["schedule"] = schedule
-                                write_state(conn, "app", latest)
-                        SCHEDULE_LAST_KEY = None
-                        SCHEDULE_AUXILIARY_KEY = None
+                                write_state(conn, app_key, latest)
+                        scheduler_runtime(controller).reset()
                         result = {"ok": True, "changed": changes}
                         if path == "/api/schedule/save":
                             result["timers"] = count
@@ -720,8 +923,10 @@ class Handler(BaseHTTPRequestHandler):
                 if len(serialized_app.encode("utf-8")) + len(serialized_settings.encode("utf-8")) > MAX_BODY:
                     raise ValueError("Backup data exceeds the 8 MB storage limit.")
                 with SCHEDULE_WRITE_LOCK, database() as conn:
-                    write_state(conn, "app", app)
-                    write_state(conn, "settings", settings)
+                    validate_controller_address(conn, controller, settings)
+                    write_state(conn, app_key, app)
+                    write_state(conn, settings_key, settings)
+                    scheduler_runtime(controller).reset()
                 self.send_json({"ok": True})
                 return
             lock = SCHEDULE_WRITE_LOCK if isinstance(incoming, dict) and (path == "/api/settings" or "schedule" in incoming) else nullcontext()
@@ -730,20 +935,31 @@ class Handler(BaseHTTPRequestHandler):
                     if not isinstance(incoming, dict):
                         raise ValueError("App state must be a JSON object.")
                     conn.execute("BEGIN IMMEDIATE")
-                    current = read_state(conn, "app") or {}
+                    current = read_state(conn, app_key) or {}
                     if "expectedSchedule" in incoming and current.get("schedule") != incoming.pop("expectedSchedule"):
                         self.send_json({"ok": False, "error": "The schedule was updated in another browser."}, 409)
                         return
                     current.update(incoming)
                     value = current
-                    key = "app"
+                    key = app_key
                 else:
                     value = validate_settings(incoming)
-                    key = "settings"
+                    validate_controller_address(conn, controller, value)
+                    key = settings_key
+                    if parse_qs(urlsplit(self.path).query).get("validate") == ["1"]:
+                        self.send_json({"ok": True})
+                        return
+                    previous = read_state(conn, key) or {}
+                    if (previous.get("host"), previous.get("mode"), previous.get("timezone")) != (
+                        value.get("host"), value.get("mode"), value.get("timezone")
+                    ):
+                        scheduler_runtime(controller).reset()
                 write_state(conn, key, value)
             self.send_json({"ok": True})
         except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             self.send_json({"ok": False, "error": str(exc)}, 400)
+        except LookupError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 404)
         except sqlite3.Error:
             self.send_json({"ok": False, "error": "Could not save persistent application data."}, 500)
 
@@ -751,15 +967,16 @@ class Handler(BaseHTTPRequestHandler):
         if urlsplit(self.path).path != "/api/settings":
             self.send_json({"ok": False, "error": "Not found"}, 404)
             return
-        with database() as conn:
-            conn.execute("DELETE FROM studio_state WHERE key = 'settings'")
-        self.send_json({"ok": True})
+        try:
+            with SCHEDULE_WRITE_LOCK, database() as conn:
+                controller = controller_id(conn, self.path)
+                conn.execute("DELETE FROM studio_state WHERE key = ?", (controller_key(controller, "settings"),))
+                scheduler_runtime(controller).reset()
+            self.send_json({"ok": True})
+        except LookupError as exc:
+            self.send_json({"ok": False, "error": str(exc)}, 404)
 
 
 if __name__ == "__main__":
-    with database() as db:
-        initial_settings = read_state(db, "settings") or DEFAULT_SETTINGS
-    if initial_settings.get("mode") == "wled" and initial_settings.get("host"):
-        scheduler_status(enabled=True, state="starting", message="Waiting for the first WLED schedule check.")
     threading.Thread(target=scheduler_loop, name="wled-calendar-scheduler", daemon=True).start()
     ThreadingHTTPServer((os.environ.get("STUDIO_BIND", "0.0.0.0"), int(os.environ.get("PORT", "8000"))), Handler).serve_forever()

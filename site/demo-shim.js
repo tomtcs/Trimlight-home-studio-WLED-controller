@@ -6,7 +6,7 @@
   const KEY = 'tlstudio-demo-v1';
   const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } };
   const store = o => { try { localStorage.setItem(KEY, JSON.stringify(o)); } catch { } };
-  const LEGACY = load(), APPSTATE = Object.assign({}, D.app, SERVER?.has_app ? (SERVER.app || {}) : (LEGACY || {}));
+  const LEGACY = SERVER?.controller && SERVER.controller !== 'primary' ? null : load(), APPSTATE = Object.assign({}, D.app, SERVER?.has_app ? (SERVER.app || {}) : (LEGACY || {}));
   const clone = o => JSON.parse(JSON.stringify(o));
 
   // ---------------- pretend controller ----------------
@@ -97,7 +97,7 @@
   const json = (o, code) => new Response(JSON.stringify(o), { status: code || 200, headers: { 'Content-Type': 'application/json' } });
   const realFetch = window.fetch.bind(window);
   window.fetch = async function (url, opt) {
-    const u = String(url), m = (opt && opt.method || 'GET').toUpperCase(), body = opt && opt.body;
+    const u = String(url).split('?')[0], m = (opt && opt.method || 'GET').toUpperCase(), body = opt && opt.body;
     const parsed = () => { try { return typeof body === 'string' ? JSON.parse(body) : {}; } catch { return {}; } };
     if (!REAL && u.includes(HOST)) {
       const path = u.split(HOST)[1].split('?')[0];
@@ -113,6 +113,17 @@
       return json({});
     }
     if (u.startsWith('/api/')) {
+      if (u === '/api/controllers') return realFetch(url, opt);
+      if (u === '/api/controller/landscape') {
+        if (REAL) return realFetch(url, opt);
+        const response = await realFetch(url, { ...opt, body: JSON.stringify({ ...parsed(), demoState: stateJSON() }) });
+        if (response.ok) {
+          const result = await response.json();
+          if (result.segments.length) apply({ seg: result.segments });
+          return json(result);
+        }
+        return response;
+      }
       if (u === '/api/controller/push') {
         if (REAL) return realFetch(url, opt);
         const data = parsed(), ids = new Set(data.seg.map(seg => seg.id));
@@ -126,7 +137,7 @@
         if (REAL) return realFetch(url, opt);
         const data = parsed(), entries = data.presets || [];
         if (u === '/api/schedule/save') {
-          const response = await window.fetch('/api/app', { method: 'POST', body: JSON.stringify({ schedule: data.schedule, expectedSchedule: data.expectedSchedule }) });
+          const response = await window.fetch(window.TLApi('/api/app'), { method: 'POST', body: JSON.stringify({ schedule: data.schedule, expectedSchedule: data.expectedSchedule }) });
           if (!response.ok) return response;
           cfg.timers = { ...cfg.timers, ins: data.timers };
         }

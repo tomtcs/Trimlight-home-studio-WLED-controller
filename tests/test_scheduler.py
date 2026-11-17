@@ -77,12 +77,7 @@ class SchedulerTests(unittest.TestCase):
         self.enterContext(patch.multiple(
             server,
             DB_PATH=str(Path(directory) / "studio.sqlite"),
-            SCHEDULE_LAST_KEY=None,
-            SCHEDULE_AUXILIARY_KEY=None,
-            SCHEDULE_RETRY_KEY=None,
-            SCHEDULE_RETRY_AT=0,
-            SCHEDULE_RETRY_DELAY=30,
-            SCHEDULE_STATUS={"enabled": True, "state": "starting"},
+            SCHEDULERS={},
         ))
         self.controller = Wled()
         self.enterContext(patch.object(server, "wled_json", self.controller))
@@ -158,8 +153,8 @@ class SchedulerTests(unittest.TestCase):
     def test_uncertain_write_is_verified_without_resending(self):
         self.controller.drop_after_write = True
         server.scheduler_tick()
-        self.assertEqual(server.SCHEDULE_STATUS["state"], "ready")
-        server.SCHEDULE_LAST_KEY = None
+        self.assertEqual(server.scheduler_runtime().status["state"], "ready")
+        server.scheduler_runtime().last_key = None
         server.scheduler_tick()
         self.assertEqual(len(self.controller.writes), 1)
         self.assertEqual(self.controller.presets["240"]["seg"][0]["col"], [[255, 0, 0]])
@@ -168,7 +163,7 @@ class SchedulerTests(unittest.TestCase):
         self.controller.ignore_write = True
         with patch.object(server.time, "monotonic", return_value=100) as monotonic:
             server.scheduler_tick()
-            self.assertEqual(server.SCHEDULE_STATUS["state"], "error")
+            self.assertEqual(server.scheduler_runtime().status["state"], "error")
             monotonic.return_value = 105
             server.scheduler_tick()
             self.assertEqual(len(self.controller.writes), 1)
@@ -176,7 +171,7 @@ class SchedulerTests(unittest.TestCase):
             monotonic.return_value = 130
             server.scheduler_tick()
         self.assertEqual(len(self.controller.writes), 1)
-        self.assertEqual(server.SCHEDULE_STATUS["state"], "ready")
+        self.assertEqual(server.scheduler_runtime().status["state"], "ready")
 
     def test_preset_comparison_checks_every_requested_field(self):
         command = server.preset_command(self.body, "Flag")
