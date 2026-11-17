@@ -21,33 +21,52 @@
   /* ---------------- house geometry: LEDs in WLED order (port 1 → 2 → 3, runs in data order) ---------------- */
   const layout = getSync('/api/layout');
   const photoSize = layout.photoSize || [2000, 1500], H = W * (Number(photoSize[1]) / Number(photoSize[0]) || .75);
-  const LEDS = [];
-  const physicalRuns = (layout.runs || []).slice().map((r, k) => ({ r, k })).sort((a, b) => (a.r.port - b.r.port) || (a.k - b.k));
-  const geometryRuns = (layout.mappedPaths || layout.runs || []).slice().map((r, k) => ({ r, k })).sort((a, b) => ((a.r.port ?? a.k) - (b.r.port ?? b.k)) || (a.k - b.k));
-  let physicalRun = 0, physicalRunStop = physicalRuns[0]?.r.leds || Infinity;
-  geometryRuns.forEach(({ r }) => {
-    const pts = r.points.map(p => [p[0] * W, p[1] * H]), seg = []; let tot = 0;
-    for (let i = 0; i < pts.length - 1; i++) { const d = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); seg.push(d); tot += d; }
-    const arr = [];
-    for (let k = 0; k < r.leds; k++) {
-      let d = (k + 0.5) / r.leds * tot, s = 0;
-      while (s < seg.length - 1 && d > seg[s]) { d -= seg[s]; s++; }
-      const f = seg[s] > 0 ? Math.min(1, d / seg[s]) : 0;
-      arr.push([pts[s][0] + (pts[s + 1][0] - pts[s][0]) * f, pts[s][1] + (pts[s + 1][1] - pts[s][1]) * f]);
-    }
-    if (r.reverse) arr.reverse();
-    arr.forEach(p => {
-      while (physicalRun < physicalRuns.length - 1 && LEDS.length >= physicalRunStop) { physicalRun++; physicalRunStop += physicalRuns[physicalRun].r.leds; }
-      LEDS.push({ x: p[0], y: p[1], run: physicalRun });
+  const physicalRuns = (layout.runs || []).slice().sort((a, b) => a.port - b.port);
+  const LEDS = physicalRuns.flatMap((r, run) => Array.from({ length: r.leds }, () => ({ run, x: NaN, y: NaN })));
+  const geometryRuns = layout.mappedPaths || physicalRuns;
+  let cursor = 0;
+  geometryRuns.forEach(r => {
+    const indices = r.indices || Array.from({ length: r.leds }, (_, i) => cursor + i);
+    if (!r.indices) cursor += r.leds;
+    if (r.reverse) indices.reverse();
+    const points = r.points.map(p => [p[0] * W, p[1] * H]);
+    const lengths = points.slice(1).map(([x, y], i) => Math.hypot(x - points[i][0], y - points[i][1]));
+    const sum = lengths.reduce((total, value) => total + value, 0);
+    indices.forEach((index, k) => {
+      if (!LEDS[index]) return;
+      let distance = (k + 0.5) / indices.length * sum, span = 0;
+      while (span < lengths.length - 1 && distance > lengths[span]) distance -= lengths[span++];
+      const [x, y] = points[span], [nextX, nextY] = points[span + 1] || points[span];
+      const fraction = lengths[span] ? distance / lengths[span] : 0;
+      Object.assign(LEDS[index], { x: x + (nextX - x) * fraction, y: y + (nextY - y) * fraction });
     });
   });
+  const isMapped = led => Number.isFinite(led?.x);
+
   const N = LEDS.length;
 
   /* ---------------- persistent app state (server: data/app.json) ---------------- */
   const APP = Object.assign({ userLooks: [], edits: {}, cats: [], starred: {}, deletedLooks: [], roofSections: [], master: { speed: 100, bright: 100, spacing: 0, theme: '' }, perRow: 3, previewAnimations: true, lastPush: null, history: [] }, getSync('/api/app'));
   APP.roofSections = Array.isArray(APP.roofSections) ? APP.roofSections : [];
-  let saveT = null; const pending = {};
-  function save(keys) { keys.forEach(k => pending[k] = APP[k]); clearTimeout(saveT); saveT = setTimeout(() => { const b = Object.assign({}, pending); for (const k in pending) delete pending[k]; fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); }).catch(() => toast('Couldn’t save', 'var(--warn)')); }, 300); }
+  let saveT = null, saving = Promise.resolve();
+  const pending = {};
+  function flushApp() {
+    clearTimeout(saveT);
+    const body = JSON.stringify(pending);
+    Object.keys(pending).forEach(key => delete pending[key]);
+    if (body === '{}') return saving;
+    saving = saving.then(async () => {
+      const response = await fetch(window.TLApi('/api/app'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+    }).catch(() => toast('Couldn’t save', 'var(--warn)'));
+    return saving;
+  }
+  window.TLFlushApp = flushApp;
+  function save(keys) {
+    keys.forEach(key => pending[key] = APP[key]);
+    clearTimeout(saveT);
+    saveT = setTimeout(flushApp, 300);
+  }
 
   /* ---------------- looks: catalog + yours, with renames/categories applied ---------------- */
   const CAT_LABEL = {}; CAT.CATS.forEach(c => CAT_LABEL[c[0]] = c[1]); APP.cats.forEach(c => CAT_LABEL[c[0]] = c[1]);
@@ -287,7 +306,7 @@
   }
   async function storePresets(presets) {
     if (!presets.length) return;
-    const response = await fetch('/api/controller/presets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ presets }) });
+    const response = await fetch(window.TLApi('/api/controller/presets'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ presets }) });
     const result = await response.json().catch(() => null);
     if (!response.ok || result?.ok !== true) throw new Error(result?.error || 'Could not store WLED presets (HTTP ' + response.status + ').');
   }
@@ -305,7 +324,7 @@
     const look = BY_ID[id];
     const body = wledBody(P); await flushPalettes();
     const expected = body.seg.filter(s => s.stop > s.start);
-    const response = await fetch('/api/controller/push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, seg: expected, name: 'Studio · ' + (look?.name || 'look') }) });
+    const response = await fetch(window.TLApi('/api/controller/push'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, seg: expected, name: 'Studio · ' + (look?.name || 'look') }) });
     const result = await response.json().catch(() => null);
     if (!response.ok || !result?.state) throw new Error(result?.error || 'Could not apply the look (HTTP ' + response.status + ').');
     const applied = result.state, actual = (applied.seg || []).filter(s => s.stop > s.start);
@@ -458,7 +477,7 @@
     const g = x.createRadialGradient(v.cw / 2, v.ch * 0.5, v.ch * 0.3, v.cw / 2, v.ch * 0.5, Math.max(v.cw, v.ch) * 0.75);
     g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.55)'); x.fillStyle = g; x.fillRect(0, 0, v.cw, v.ch);
     const r0 = Math.max(1.1, 3.8 * v.k * v.size); x.fillStyle = 'rgba(18,20,26,0.75)';
-    for (const l of LEDS) { x.beginPath(); x.arc(l.x * v.k + v.ox, l.y * v.k + v.oy, r0 * 1.05, 0, 6.2832); x.fill(); }
+    for (const l of LEDS) { if (!isMapped(l)) continue; x.beginPath(); x.arc(l.x * v.k + v.ox, l.y * v.k + v.oy, r0 * 1.05, 0, 6.2832); x.fill(); }
     v.plate = c;
   }
   // optional controller output stage: evening drift + breath, applied after the effects, so the live view
@@ -498,7 +517,7 @@
     ctx.globalCompositeOperation = 'lighter';
     for (let i = 0; i < N; i++) {
       const r = buf[i * 3], gg = buf[i * 3 + 1], b = buf[i * 3 + 2], m = Math.max(r, gg, b);
-      if (m < 4) continue;
+      if (m < 4 || !isMapped(LEDS[i])) continue;
       const a = (m / 255) * gb, s = 255 / m, cr = r * s | 0, cg = gg * s | 0, cb = b * s | 0, cs = cr + ',' + cg + ',' + cb;
       const x = LEDS[i].x * k + v.ox, y = LEDS[i].y * k + v.oy;
       const g1 = ctx.createRadialGradient(x, y, 0, x, y, R);
@@ -955,17 +974,18 @@
   function drawOverlay(v, P) {   // on the stage house: hovered bulb ring + optional labels
     const ctx = v.ctx, k = v.k, px = l => [l.x * k + v.ox, l.y * k + v.oy];
     if (APP.colorLabels) {
-      const lift = 17 * DPR, [sx, sy] = px(LEDS[0]); pill(ctx, sx - 4 * DPR, sy + lift + 4 * DPR, 'start →', 'rgba(255,179,71,.92)', '#200c00');
+      const lift = 17 * DPR, first = LEDS.find(isMapped);
+      if (first) { const [sx, sy] = px(first); pill(ctx, sx - 4 * DPR, sy + lift + 4 * DPR, 'start →', 'rgba(255,179,71,.92)', '#200c00'); }
       const runs = [];   // label each stretch of one color: blocks in swatch mode, pattern entries for short per-bulb runs
       let a = 0; for (let i = 1; i <= N; i++) if (i === N || ownerAt(P, i) !== ownerAt(P, a)) { runs.push([a, i - 1, ownerAt(P, a)]); a = i; }
       if (runs.length <= 16) runs.forEach(([s0, s1, j]) => {
-        if (j < 0 || (hov.hi >= 0 && j !== hov.hi)) return;
+        if (!isMapped(LEDS[(s0 + s1) >> 1]) || j < 0 || (hov.hi >= 0 && j !== hov.hi)) return;
         const c = P.cmode === 'bulb' ? P.seq[j].c : colorList(P)[j]; if (!c) return;
         const [x, y] = px(LEDS[(s0 + s1) >> 1]), num = P.cmode === 'bulb' ? P.seq.slice(0, j + 1).filter(e => e.c).length : j + 1;
         pill(ctx, x, y - lift, String(num), 'rgba(3,5,10,.78)', '#eef2ff'); ctx.fillStyle = hex(c); ctx.beginPath(); ctx.arc(x, y - lift + 11 * DPR, 2.4 * DPR, 0, 6.2832); ctx.fill();
       });
     }
-    if (hov.k >= 0) { const [x, y] = px(LEDS[hov.k]); ctx.strokeStyle = 'rgba(255,215,160,.95)'; ctx.lineWidth = 1.5 * DPR; ctx.beginPath(); ctx.arc(x, y, 9 * DPR, 0, 6.2832); ctx.stroke(); }
+    if (hov.k >= 0 && isMapped(LEDS[hov.k])) { const [x, y] = px(LEDS[hov.k]); ctx.strokeStyle = 'rgba(255,215,160,.95)'; ctx.lineWidth = 1.5 * DPR; ctx.beginPath(); ctx.arc(x, y, 9 * DPR, 0, 6.2832); ctx.stroke(); }
   }
   function setHi(i) { if (hov.hi === i) return; hov.hi = i; $('ctrls').querySelectorAll('[data-sw],[data-sq]').forEach(el => el.classList.toggle('hl', +(el.dataset.sw ?? el.dataset.sq) === i)); }
   $('ctrls').addEventListener('pointerover', e => {
@@ -1172,7 +1192,7 @@
     const prompt = $('aiPrompt').value.trim(); if (!prompt) return $('aiPrompt').focus();
     $('aiGo').disabled = true; $('aiStat').innerHTML = '<span class="aispin"></span>The AI service is designing 4 looks for your house…';
     try {
-      const r = await fetch('/api/ai/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, n: 4 }) }).then(r => r.json());
+      const r = await fetch(window.TLApi('/api/ai/create'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, n: 4 }) }).then(r => r.json());
       if (!r.ok) throw new Error(r.error || 'AI error');
       aiLooks = r.looks; closeAI(); $('aiModal').hidden = false;
       $('aiRes').innerHTML = aiLooks.map((lk, i) => '<div class="aicard"><canvas data-ai="' + i + '"></canvas><div class="m"><b>' + esc(lk.name) + '</b><p>' + esc(lk.desc) + '</p><small>' + esc((WL.effects[lk.fx] || TLFX?.names?.[lk.fx] || 'Effect ' + lk.fx) + ' · ' + (CAT_LABEL[lk.category] || lk.category)) + ' — ' + esc(lk.why) + '</small><button class="use" data-use="' + i + '">Use this one →</button></div></div>').join('');
@@ -1201,7 +1221,7 @@
       const prompt = $('aiTw').value.trim(); if (!prompt) return $('aiTw').focus();
       $('aiTwGo').disabled = true; $('aiTwS').innerHTML = '<span class="aispin"></span>The AI service is reworking it…';
       try {
-        const r = await fetch('/api/ai/tweak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, P: state.edit.P, name: BY_ID[state.edit.id].name }) }).then(r => r.json());
+        const r = await fetch(window.TLApi('/api/ai/tweak'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt, P: state.edit.P, name: BY_ID[state.edit.id].name }) }).then(r => r.json());
         if (!r.ok) throw new Error(r.error || 'AI error');
         const old = state.edit.P;
         state.edit.P = bakeMaster(upgradeP(aiP(r.look)));
@@ -1368,7 +1388,7 @@
     }
     const request = ++schedulerRequest;
     try {
-      const response = await fetch('/api/scheduler/status', { cache: 'no-store' });
+      const response = await fetch(window.TLApi('/api/scheduler/status'), { cache: 'no-store' });
       if (!response.ok) throw new Error('Could not read the calendar scheduler status.');
       const status = await response.json();
       if (request === schedulerRequest) showSchedulerStatus(status);
@@ -1386,7 +1406,7 @@
     toggle.disabled = true;
     $('schedulerStatus').textContent = enabled ? 'Resuming calendar updates…' : 'Pausing calendar updates…';
     try {
-      const response = await fetch('/api/scheduler/status', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) });
+      const response = await fetch(window.TLApi('/api/scheduler/status'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not change the scheduler setting.');
       changingScheduler = false;
@@ -1411,7 +1431,7 @@
       refreshSchedulerStatus();
     }, 5000);
     try {
-      const [i, c, scheduler] = await Promise.all([wget('/json/info'), wget('/json/cfg'), fetch('/api/scheduler/status').then(r => r.json()).catch(() => null)]), on = (c.timers?.ins || []).filter(t => t.en && t.macro).length;
+      const [i, c, scheduler] = await Promise.all([wget('/json/info'), wget('/json/cfg'), fetch(window.TLApi('/api/scheduler/status')).then(r => r.json()).catch(() => null)]), on = (c.timers?.ins || []).filter(t => t.en && t.macro).length;
       WL.brightnessGamma = c.light?.gc || {};
       const service = window.TL_REAL_WLED && scheduler?.enabled ? ' · Calendar service ' + (scheduler.state === 'error' ? 'error: ' + scheduler.message : (scheduler.message || scheduler.state)) : '';
       $('clockInfo').textContent = 'Controller clock ' + (i.time || '?') + ' · ' + on + ' timer' + (on === 1 ? '' : 's') + ' active · internet time ' + (c.if?.ntp?.en ? 'on' : 'off') + service;
@@ -1471,7 +1491,7 @@
       ins.push(...solar);
       await flushPalettes();
       const schedule = clone(SC);
-      const saved = await fetch('/api/schedule/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule, expectedSchedule: persistedSchedule, presets: [...new Map(presets.map(entry => [entry.slot, entry])).values()], timers: ins, location: ntp }) });
+      const saved = await fetch(window.TLApi('/api/schedule/save'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule, expectedSchedule: persistedSchedule, presets: [...new Map(presets.map(entry => [entry.slot, entry])).values()], timers: ins, location: ntp }) });
       const result = await saved.json();
       if (!saved.ok || !result.ok) throw new Error(result.error || 'The Studio API could not save the schedule.');
       savedSchedule = persistedSchedule = schedule;
@@ -1566,9 +1586,9 @@
       if (JSON.stringify(next) === JSON.stringify(previous)) return;
       await flushPalettes();
       if ($('schSave').disabled || savedSchedule !== previous) return;
-      const response = await fetch('/api/app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: next, expectedSchedule: persistedSchedule }) });
+      const response = await fetch(window.TLApi('/api/app'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ schedule: next, expectedSchedule: persistedSchedule }) });
       if (response.status === 409) {
-        const current = (await (await fetch('/api/app', { cache: 'no-store' })).json()).schedule;
+        const current = (await (await fetch(window.TLApi('/api/app'), { cache: 'no-store' })).json()).schedule;
         persistedSchedule = current ?? null;
         savedSchedule = clone(current || {});
         return;
@@ -1583,12 +1603,15 @@
   const RUNS = (() => { let o = 0; return (layout.runs || []).slice().map((r, k) => ({ r, k })).sort((a, b) => (a.r.port - b.r.port) || (a.k - b.k)).map(({ r }) => { const x = { start: o, stop: o + r.leds, name: r.name, port: r.port }; o += r.leds; return x; }); })();
   const SEC_COL = ['#62d682', '#4dc3ff', '#b98cff', '#4dffa6', '#ff6b9a', '#ffd36b', '#7a8cff', '#ff8a4d'];
   const SEC_SPEEDS = [[0.25, '¼×'], [0.5, '½×'], [0.75, '¾×'], [1, '1×'], [1.5, '1½×'], [2, '2×']];
+  const landscapeSections = layout.landscape || [];
+  const landscapeSplit = document.querySelector('[data-split="landscape"]');
+  landscapeSplit.hidden = !landscapeSections.length;
   const secLooks = () => LOOKS.filter(l => !isSec(l.P));
   let SD = null, vSec = null;   // the split look being edited
   const PORT_NAME = Object.fromEntries([...new Set(RUNS.map(r => r.port))].map(port => [port, 'Output ' + port]));
   const portRange = pt => { const rs = RUNS.filter(r => r.port === pt); return rs.length ? [rs[0].start, rs[rs.length - 1].stop] : null; };
   function nameFor(start, stop) {   // name a bulb range after the roof runs it covers
-    const saved = APP.roofSections.find(s => s.start === start && s.stop === stop);
+    const saved = [...landscapeSections, ...APP.roofSections].find(s => s.start === start && s.stop === stop);
     if (saved) return saved.name;
     for (const pt in PORT_NAME) { const r = portRange(+pt); if (r && r[0] === start && r[1] === stop) return PORT_NAME[pt]; }
     const rs = RUNS.filter(r => r.start < stop && r.stop > start);
@@ -1598,7 +1621,11 @@
   }
   function splitRanges(kind) {
     if (kind === 'outputs') return RUNS.map(r => [r.start, r.stop, r.name]);
-    const raw = (APP.roofSections || []).filter(s => Number.isInteger(s.start) && Number.isInteger(s.stop) && s.start >= 0 && s.stop <= N && s.stop > s.start).slice().sort((a, b) => a.start - b.start);
+    if (kind === 'landscape') {
+      const boundaries = [...new Set([...RUNS.flatMap(r => [r.start, r.stop]), ...landscapeSections.flatMap(s => [s.start, s.stop])])].sort((a, b) => a - b);
+      return boundaries.slice(1).map((stop, i) => [boundaries[i], stop, nameFor(boundaries[i], stop)]);
+    }
+    const raw = APP.roofSections.filter(s => Number.isInteger(s.start) && Number.isInteger(s.stop) && s.start >= 0 && s.stop <= N && s.stop > s.start).slice().sort((a, b) => a.start - b.start);
     const parts = []; let cursor = 0;
     raw.forEach(s => { const start = Math.max(cursor, s.start); if (start > cursor) parts.push([cursor, start, 'Bulbs ' + (cursor + 1) + '–' + start]); if (s.stop > start) parts.push([start, s.stop, s.name]); cursor = Math.max(cursor, s.stop); });
     if (cursor < N) parts.push([cursor, N, 'Bulbs ' + (cursor + 1) + '–' + N]);
@@ -1607,6 +1634,7 @@
   function resplit(kind) {
     const old = SD.P.parts, ranges = splitRanges(kind), fallback = old[0]?.look || secLooks()[0]?.id || LOOKS[0]?.id;
     if (!ranges.length) return toast('Add output channels or named roof sections first.', 'var(--warn)');
+    if (ranges.length > (WL.info?.leds?.maxseg || 32)) return toast('These ranges exceed the controller’s segment limit.', 'var(--warn)');
     SD.P.parts = ranges.map(([a, b, label]) => {
       const prior = old.filter(p => p.start < b && p.stop > a).sort((x, y) => (Math.min(b, y.stop) - Math.max(a, y.start)) - (Math.min(b, x.stop) - Math.max(a, x.start)))[0];
       return { start: a, stop: b, name: label || nameFor(a, b), look: prior?.look || fallback, dir: prior?.dir || 'n', speed: prior?.speed || 1 };
@@ -1619,7 +1647,7 @@
     if (!vSec) vSec = makeView($('secCv'), CROP_CARD, 1.4, 2);
     const l = id && BY_ID[id] && isSec(BY_ID[id].P) ? BY_ID[id] : null;
     if (l) SD = { id: l.id, name: l.name, P: clone(l.P) };
-    else if (!SD || SD.id) { SD = { id: null, name: 'My split look', P: { parts: [], bri: 180 } }; resplit('outputs'); }
+    else if (!SD || SD.id) { SD = { id: null, name: 'My split look', P: { parts: [], bri: 180 } }; resplit(landscapeSections.length ? 'landscape' : 'outputs'); }
     resetSecView(); renderSections();
   }
   function renderSections() {
@@ -2109,7 +2137,7 @@
   const TLS = window.TLSimple;
   function openSimple(id) { if (!TLS) return toast('Builder didn’t load', 'var(--warn)'); showRoute('simple'); TLS.open(id); }
   const BHOST = {
-    FXL, N, runs: () => RUNS, leds: () => LEDS, sections: () => APP.roofSections,
+    FXL, N, runs: () => RUNS, leds: () => LEDS, sections: () => [...APP.roofSections, ...landscapeSections],
     loadDraft: () => APP.builderDraft, saveDraft: draft => { APP.builderDraft = draft; save(['builderDraft']); },
     fxdata: fx => WL.fxdata[fx], fxName: fx => WL.effects[fx], isAudio: fx => fxMeta(fx).audio,
     palettes: () => (WL.palettes.length ? WL.palettes : (FXL ? FXL.palNames : [])).map((name, id) => ({ id, name })),
@@ -2139,7 +2167,7 @@
   /* ---------------- boot ---------------- */
   renderNav(); setPerRow(APP.perRow || 3); renderMaster(); renderGallery(); route(true); requestAnimationFrame(frame);
   (async () => {
-    const st = await fetch('/api/wled/status').then(r => r.json()).catch(() => ({}));
+    const st = await fetch(window.TLApi('/api/wled/status')).then(r => r.json()).catch(() => ({}));
     WL.host = st.host || null; WL._ready(); if (!WL.host) { syncController(); return toast('WLED isn’t set up yet: open Setup', 'var(--warn)'); }
     try {
       for (const [k, p] of [['fxdata', '/json/fxdata'], ['effects', '/json/effects'], ['palettes', '/json/palettes'], ['info', '/json/info']]) WL[k] = await wget(p);
@@ -2153,7 +2181,7 @@
         if (Number.isFinite(lat) && Number.isFinite(lon)) { HOME.lat = lat; HOME.lon = lon; }
       }
     } catch { toast('Can’t reach the controller right now', 'var(--warn)'); }
-    if (!WL.fxdata.length) try { const fi = await fetch('/api/fxinfo').then(r => r.json()); WL.fxdata = []; (fi.effects || []).forEach(e => WL.fxdata[e.id] = e.meta); WL.effects = []; (fi.effects || []).forEach(e => WL.effects[e.id] = e.name); if (!WL.palettes.length) { WL.palettes = []; (fi.palettes || []).forEach(p => WL.palettes[p.id] = p.name); } renderGallery(true); if (state.edit) renderControls(); } catch { }
+    if (!WL.fxdata.length) try { const fi = await fetch(window.TLApi('/api/fxinfo')).then(r => r.json()); WL.fxdata = []; (fi.effects || []).forEach(e => WL.fxdata[e.id] = e.meta); WL.effects = []; (fi.effects || []).forEach(e => WL.effects[e.id] = e.name); if (!WL.palettes.length) { WL.palettes = []; (fi.palettes || []).forEach(p => WL.palettes[p.id] = p.name); } renderGallery(true); if (state.edit) renderControls(); } catch { }
     connectWS(); onHouseChanged(); refreshScheduleBodies();
     if (state.edit) syncEditState();
     checkPaletteSlots();

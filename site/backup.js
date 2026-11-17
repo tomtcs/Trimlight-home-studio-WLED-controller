@@ -13,7 +13,7 @@
     if (!status || !exportButton || !importInput) return;
     const setStatus = (message, error = false) => { status.textContent = message; status.classList.toggle('bad', error); };
     const getJSON = async path => {
-      const response = await fetch(path, { cache: 'no-store' });
+      const response = await fetch(window.TLApi(path), { cache: 'no-store' });
       if (!response.ok) throw new Error(`Could not read ${path} (HTTP ${response.status}).`);
       return response.json();
     };
@@ -38,7 +38,8 @@
         const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
         const link = document.createElement('a');
         link.href = url;
-        link.download = `trimlight-home-studio-wled-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        const profile = window.TL_SERVER_STATE?.controllers?.[window.TL_SERVER_STATE.controller] || 'controller';
+        link.download = `trimlight-${profile.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-backup-${new Date().toISOString().slice(0, 10)}.json`;
         document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
         setStatus('Backup downloaded. Store the file somewhere separate from the Docker host.');
       } catch (error) { setStatus(error.message || 'Could not create the backup.', true); }
@@ -53,9 +54,9 @@
         if (file.size > MAX_BYTES) throw new Error('Backup file exceeds the 8 MB limit.');
         const backup = JSON.parse(await file.text());
         validateEnvelope(backup);
-        if (!window.confirm('Restore this backup? It will replace the current patterns, schedules, roof sections, controller setup, photos, and traced rooflines. Export a backup of the current data first if you may need it.')) return;
+        if (!window.confirm('Restore this backup? It will replace the selected controller’s looks, schedules, setup, photos, and lighting traces. Export a backup of the current data first if you may need it.')) return;
         setStatus('Validating and restoring backup…');
-        const response = await fetch('/api/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup) });
+        const response = await fetch(window.TLApi('/api/restore'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup) });
         const result = await response.json().catch(() => ({}));
         if (!response.ok || !result.ok) throw new Error(result.error || `Restore failed (HTTP ${response.status}).`);
         setStatus('Restore complete. Reloading the app…');

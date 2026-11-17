@@ -13,6 +13,7 @@
   const read = () => {
     let value;
     if (window.TL_SERVER_STATE?.has_settings) value = Object.assign({ mode: 'demo', host: '', outputs: [] }, window.TL_SERVER_STATE.settings || {});
+    else if (window.TL_SERVER_STATE?.controller && window.TL_SERVER_STATE.controller !== 'primary') value = { mode: 'demo', host: '', outputs: [] };
     else { try { value = Object.assign({ mode: 'demo', host: '', outputs: [] }, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch { value = { mode: 'demo', host: '', outputs: [] }; } }
     if (!Array.isArray(value.outputs)) value.outputs = [];
     if ([2, 4, 6].includes(Number(value.channelCount))) value.channelCount = Number(value.channelCount);
@@ -48,38 +49,86 @@
     let runs = fallback.runs;
     if (Array.isArray(s.outputs) && s.outputs.length) {
       runs = s.outputs.slice(0, 6).map((o, i) => ({
-        id: i + 1, name: o.name || DEFAULT_NAMES[i] || `Output ${i + 1}`, port: i + 1,
+        id: i + 1, name: o.name || `Output ${i + 1}`, port: i + 1,
         points: Array.isArray(o.points) && o.points.length >= 2 ? clone(o.points) : clone(ROUTES[i] || ROUTES[ROUTES.length - 1]),
-        leds: Math.max(1, Math.min(10000, Number(o.leds) || 1)), auto: false, reverse: !!o.reverse
+        leds: Math.max(1, Math.min(10000, Number(o.leds) || 1)), auto: false, reverse: !!o.reverse, landscape: o.use === 'landscape'
       }));
     }
-    const layout = { ...fallback, photo, photoSize, runs };
-    if (!Array.isArray(view?.lines) || !view.lines.length) return layout;
-    const routes = [];
-    for (const line of view.lines) {
-      const points = Array.isArray(line.points) ? line.points : [], wires = new Set(line.wireSegments || []);
-      let lit = [];
-      for (let i = 0; i < points.length - 1; i++) {
-        if (wires.has(i)) { if (lit.length > 1) routes.push({ name: line.name || selectedSide.label, points: lit }); lit = []; }
-        else { if (!lit.length) lit.push(points[i]); lit.push(points[i + 1]); }
-      }
-      if (lit.length > 1) routes.push({ name: line.name || selectedSide.label, points: lit });
+    const layout = { ...fallback, photo, photoSize, runs, landscape: [] };
+    let offset = 0;
+    runs.forEach(run => { run.start = offset; offset += run.leds; });
+    const reserved = new Set();
+    const visibleLandscape = [];
+    for (const run of runs) {
+      if (run.landscape) for (let i = run.start; i < run.start + run.leds; i++) reserved.add(i);
     }
-    if (!routes.length) return layout;
-    const total = runs.reduce((n, run) => n + run.leds, 0), visibleRoutes = routes.slice(0, total);
-    const lengths = visibleRoutes.map(route => route.points.slice(1).reduce((n, point, i) => n + Math.hypot(point[0] - route.points[i][0], point[1] - route.points[i][1]), 0));
-    const lengthTotal = lengths.reduce((a, b) => a + b, 0) || visibleRoutes.length;
-    let used = 0;
-    layout.mappedPaths = visibleRoutes.map((route, i) => {
-      const count = i === visibleRoutes.length - 1 ? total - used : Math.max(1, Math.floor(total * lengths[i] / lengthTotal)); used += count;
-      return { name: route.name, points: route.points.map(p => [p[0] / 100, p[1] / 100]), leds: count, reverse: false };
-    });
+    for (const [side, houseView] of Object.entries(s.houseViews || {})) {
+      for (const line of houseView.lines || []) {
+        if (line.kind !== 'landscape') continue;
+        const run = runs[line.output - 1];
+        if (!run || !(1 <= line.first && line.first <= line.last && line.last <= run.leds)) continue;
+        const start = run.start + line.first - 1, stop = run.start + line.last;
+        const zone = { name: line.name, start, stop };
+        layout.landscape.push(zone);
+        for (let i = start; i < stop; i++) reserved.add(i);
+        if (side === selectedSide.id) visibleLandscape.push({ line, zone });
+      }
+    }
+    if (!view?.lines?.length && !reserved.size) return layout;
+    const pathsFor = line => {
+      if (line.points.length === 1) return [line.points.map(point => point.map(x => x / 100))];
+      const wires = new Set(line.wireSegments || []), pieces = [];
+      let lit = [];
+      for (let i = 0; i < line.points.length - 1; i++) {
+        if (wires.has(i)) {
+          if (lit.length) pieces.push(lit);
+          lit = [];
+        } else {
+          if (!lit.length) lit.push(line.points[i]);
+          lit.push(line.points[i + 1]);
+        }
+      }
+      if (lit.length) pieces.push(lit);
+      return pieces.map(piece => piece.map(point => point.map(x => x / 100)));
+    };
+    const divide = (paths, indices) => {
+      const spans = paths.slice(0, indices.length);
+      const ratio = photoSize[1] / photoSize[0];
+      const lengths = spans.map(path => path.slice(1).reduce((len, point, i) => (
+        len + Math.hypot(point[0] - path[i][0], (point[1] - path[i][1]) * ratio)
+      ), 0));
+      const length = lengths.reduce((sum, value) => sum + value, 0);
+      let used = 0, distance = 0;
+      return spans.map((points, i) => {
+        distance += lengths[i];
+        const share = length ? distance / length : (i + 1) / spans.length;
+        const end = i === spans.length - 1 ? indices.length : i + 1 + Math.round((indices.length - spans.length) * share);
+        const part = { points, indices: indices.slice(used, end) };
+        used = end;
+        return part;
+      });
+    };
+    const indices = (from, to) => Array.from({ length: to - from }, (_, i) => i + from);
+    const roofPaths = (view?.lines || []).filter(line => line.kind !== 'landscape').flatMap(pathsFor);
+    const roofIndices = indices(0, offset).filter(i => !reserved.has(i));
+    if (roofPaths.length) layout.mappedPaths = divide(roofPaths, roofIndices);
+    else if (!view?.photo) {
+      layout.mappedPaths = runs.flatMap(run => {
+        const unreserved = indices(run.start, run.start + run.leds).filter(i => !reserved.has(i));
+        if (run.reverse) unreserved.reverse();
+        return divide([run.points], unreserved);
+      });
+    } else layout.mappedPaths = [];
+    for (const { line, zone } of visibleLandscape) {
+      layout.mappedPaths.push(...divide(pathsFor(line), indices(zone.start, zone.stop)));
+    }
     return layout;
   }
+
   async function saveSettings(patch) {
     const next = Object.assign(read(), patch || {});
     if (window.TL_SERVER_STATE) {
-      const response = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
+      const response = await fetch(window.TLApi('/api/settings'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
       if (!response.ok) { const failure = await response.json().catch(() => ({})); throw new Error(failure.error || `Could not save settings (HTTP ${response.status}).`); }
     }
     write(next);
@@ -92,15 +141,16 @@
   const setStatus = (message, bad = false) => { result.textContent = message; result.classList.toggle('bad', bad); };
   channelCount.addEventListener('change', () => { const detected = rows.querySelectorAll('.wled-output').length; if (detected > Number(channelCount.value)) setStatus(`${detected} configured outputs exceed the selected ${channelCount.value}-channel capacity. Remove unused rows or select a larger controller.`, true); else setStatus(`${detected} output${detected === 1 ? '' : 's'} configured within the ${channelCount.value}-channel capacity.`); });
   const htmlRow = (o, i) => {
-    const order = String(o.order || 'GRB');
-    const orders = ['RGB', 'RBG', 'GRB', 'GBR', 'BRG', 'BGR'];
+    const order = String(o.order ?? 'GRB');
+    const orders = /^\d+$/.test(order) ? ['0', '1', '2', '3', '4', '5'] : ['RGB', 'RBG', 'GRB', 'GBR', 'BRG', 'BGR'];
+    const labels = ['GRB', 'RGB', 'BRG', 'RBG', 'BGR', 'GBR'];
     if (!orders.includes(order)) orders.push(order);
     return `<div class="wled-output" data-output="${i}" data-points="${esc(JSON.stringify(o.points || []))}" data-reverse="${o.reverse ? '1' : '0'}">
-      <label>Channel name<input data-name value="${esc(o.name || DEFAULT_NAMES[i] || `Output ${i + 1}`)}" maxlength="24"></label>
+      <label>Output ${i + 1} name<input data-name value="${esc(o.name || DEFAULT_NAMES[i] || `Output ${i + 1}`)}" maxlength="24"></label>
       <label>GPIO pin<input data-pin value="${esc(Array.isArray(o.pin) ? o.pin.join(', ') : o.pin ?? '')}" readonly aria-label="WLED output pin"></label>
       <label>LEDs on channel<input data-leds type="number" min="1" max="10000" step="1" value="${Math.max(1, Number(o.leds) || 1)}" required></label>
-      <label>Roofline mapping<small>${o.points?.length >= 2 ? `${o.points.length} legacy points · use the house mapper below for elevations` : 'Use the house mapper below to trace elevations'}</small></label>
-      <label>Color order<select data-order>${orders.map(x => `<option${x === order ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
+      <label>Lighting use<select data-use><option value="roof"${o.use !== 'landscape' ? ' selected' : ''}>Roofline</option><option value="landscape"${o.use === 'landscape' ? ' selected' : ''}>Landscape</option></select></label>
+      <label>Color order<select data-order>${orders.map(x => `<option value="${esc(x)}"${x === order ? ' selected' : ''}>${esc(labels[x] || x)}</option>`).join('')}</select></label>
       ${mode.value === 'demo' ? `<button type="button" class="hm-small danger" data-remove-demo="${i}">Remove channel</button>` : ''}
     </div>`;
   };
@@ -116,104 +166,47 @@
       pin: r.querySelector('[data-pin]').value,
       leds: Number(r.querySelector('[data-leds]').value),
       order: r.querySelector('[data-order]').value,
+      use: r.querySelector('[data-use]').value,
       points: JSON.parse(r.dataset.points || '[]'), reverse: r.dataset.reverse === '1'
     }));
   }
-  const photoInput = document.getElementById('wledPhoto'), mapCanvas = document.getElementById('roofMap'), finishMap = document.getElementById('finishMap'), undoMap = document.getElementById('undoMap');
-  let savedPhoto = read().photo || '', photoSize = read().photoSize || [2000, 1500], photoImg = null, drawing = -1, draft = [], mapRect = null;
-  function drawMap() {
-    if (!mapCanvas) return;
-    const box = mapCanvas.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
-    mapCanvas.width = Math.max(1, Math.round(box.width * dpr)); mapCanvas.height = Math.max(1, Math.round(box.height * dpr));
-    const ctx = mapCanvas.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#0b0e0d'; ctx.fillRect(0, 0, box.width, box.height); mapRect = null;
-    if (photoImg?.complete && photoImg.naturalWidth) {
-      const scale = Math.min(box.width / photoImg.naturalWidth, box.height / photoImg.naturalHeight), w = photoImg.naturalWidth * scale, h = photoImg.naturalHeight * scale, x = (box.width - w) / 2, y = (box.height - h) / 2;
-      ctx.drawImage(photoImg, x, y, w, h); mapRect = { x, y, w, h };
-    } else {
-      ctx.fillStyle = '#98a79d'; ctx.font = '14px Inter,system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.fillText('Upload a clear photo of the front of your home to trace rooflines', box.width / 2, box.height / 2);
-    }
-    const outputs = readRows();
-    outputs.forEach((o, i) => {
-      const pts = i === drawing ? draft : o.points;
-      if (!pts?.length || !mapRect) return;
-      const hue = ['#62d682', '#7fb3ff', '#ffc46b', '#d99bff', '#ff7f9f', '#75d6d0'][i % 6];
-      ctx.strokeStyle = hue; ctx.fillStyle = hue; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-      ctx.beginPath(); pts.forEach((p, k) => { const x = mapRect.x + p[0] * mapRect.w, y = mapRect.y + p[1] * mapRect.h; if (!k) ctx.moveTo(x, y); else ctx.lineTo(x, y); }); ctx.stroke();
-      pts.forEach((p, k) => { const x = mapRect.x + p[0] * mapRect.w, y = mapRect.y + p[1] * mapRect.h; ctx.beginPath(); ctx.arc(x, y, k === 0 ? 6 : 4.5, 0, Math.PI * 2); ctx.fill(); });
-      const p = pts[Math.floor(pts.length / 2)]; if (p) { ctx.font = '600 12px Inter,system-ui,sans-serif'; ctx.textAlign = 'left'; ctx.fillText(o.name || `Output ${i + 1}`, mapRect.x + p[0] * mapRect.w + 7, mapRect.y + p[1] * mapRect.h - 8); }
-    });
-  }
-  function drawPhoto(data) {
-    savedPhoto = data || ''; photoImg = null;
-    if (savedPhoto) { photoImg = new Image(); photoImg.onload = drawMap; photoImg.onerror = () => setStatus('The saved home photo could not be loaded. Upload it again.', true); photoImg.src = savedPhoto; }
-    drawMap();
-  }
-  rows.addEventListener('click', e => {
-    const b = e.target.closest('[data-trace]'); if (!b) return;
-    const row = b.closest('.wled-output'); drawing = Number(row.dataset.output); draft = [];
-    if (!savedPhoto) setStatus('Upload a home photo, then click along the selected channel’s roofline.');
-    else setStatus(`Tracing ${row.querySelector('[data-name]').value || `Output ${drawing + 1}`} · click points in data-flow order, then finish.`);
-    if (finishMap) finishMap.disabled = !savedPhoto;
-    if (undoMap) undoMap.disabled = true;
-    drawMap(); mapCanvas?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  });
-  mapCanvas?.addEventListener('click', e => {
-    if (drawing < 0) return setStatus('Select “Trace roofline” for an output channel first.');
-    if (!mapRect) return setStatus('Upload a home photo before placing roofline points.');
-    const box = mapCanvas.getBoundingClientRect(), x = e.clientX - box.left, y = e.clientY - box.top;
-    if (x < mapRect.x || y < mapRect.y || x > mapRect.x + mapRect.w || y > mapRect.y + mapRect.h) return;
-    draft.push([+((x - mapRect.x) / mapRect.w).toFixed(5), +((y - mapRect.y) / mapRect.h).toFixed(5)]);
-    if (finishMap) finishMap.disabled = draft.length < 2;
-    if (undoMap) undoMap.disabled = !draft.length;
-    drawMap();
-  });
-  finishMap?.addEventListener('click', () => {
-    if (drawing < 0 || draft.length < 2) return;
-    const row = rows.querySelector(`.wled-output[data-output="${drawing}"]`);
-    row.dataset.points = JSON.stringify(draft); row.querySelector('[data-mapstat]').textContent = `${draft.length} points mapped`; row.querySelector('[data-trace]').textContent = 'Edit traced line';
-    drawing = -1; draft = []; finishMap.disabled = true; undoMap.disabled = true; setStatus('Roofline mapping saved with the controller settings. Continue tracing other output channels.'); drawMap();
-  });
-  undoMap?.addEventListener('click', () => { draft.pop(); finishMap.disabled = draft.length < 2; undoMap.disabled = !draft.length; drawMap(); });
-  photoInput?.addEventListener('change', () => {
-    const file = photoInput.files?.[0]; if (!file) return;
-    if (!file.type.startsWith('image/')) return setStatus('Choose an image file such as JPG, PNG, or WebP.', true);
-    const url = URL.createObjectURL(file), img = new Image();
-    img.onload = () => {
-      const scale = Math.min(1, 1600 / img.naturalWidth, 1200 / img.naturalHeight), w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale), cv = document.createElement('canvas'); cv.width = w; cv.height = h; cv.getContext('2d').drawImage(img, 0, 0, w, h);
-      const data = cv.toDataURL('image/jpeg', .78); URL.revokeObjectURL(url);
-      if (data.length > 2200000) return setStatus('This image is still too large for browser storage. Choose a smaller or lower-resolution photo.', true);
-      savedPhoto = data; photoSize = [w, h]; drawing = -1; draft = [];
-      rows.querySelectorAll('.wled-output').forEach(row => { row.dataset.points = '[]'; row.querySelector('[data-mapstat]').textContent = 'Trace this photo'; row.querySelector('[data-trace]').textContent = 'Trace roofline'; });
-      photoImg = new Image(); photoImg.onload = drawMap; photoImg.src = data; setStatus('Home photo loaded. Trace each WLED output channel in the order its LEDs run.');
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); setStatus('Could not read that image. Try a JPG, PNG, or WebP photo.', true); }; img.src = url;
-  });
-  window.addEventListener('resize', drawMap);
-  if (savedPhoto) drawPhoto(savedPhoto);
+  const demoRows = () => window.DEMO_DATA.layout.runs.slice(0, Number(channelCount.value)).map(r => ({ name: r.name, leds: r.leds, pin: '', order: 'GRB' }));
   function loadForm() {
     const s = read(); mode.value = s.mode || 'demo'; addr.value = s.host || ''; channelCount.value = String([2, 4, 6].includes(Number(s.channelCount)) ? Number(s.channelCount) : ([2, 4, 6].includes(s.outputs?.length) ? s.outputs.length : 4)); lat.value = s.lat ?? ''; lon.value = s.lon ?? '';
     if (s.outputs?.length) drawRows(s.outputs);
-    else if (s.mode === 'demo') drawRows(window.DEMO_DATA.layout.runs.map((r, i) => ({ name: r.name, leds: r.leds, pin: '', order: 'GRB' })));
+    else if (s.mode === 'demo') drawRows(demoRows());
     else drawRows([]);
     document.getElementById('applyWled').disabled = s.mode === 'wled';
     document.getElementById('demoReset').hidden = s.mode === 'wled';
     document.getElementById('addDemoOutput').hidden = s.mode === 'wled';
     document.getElementById('applyWled').textContent = s.mode === 'wled' ? 'Apply settings & connect' : 'Save demo setup';
     const banner = document.getElementById('modeBanner');
-    if (banner) banner.innerHTML = s.mode === 'wled' ? '<b>WLED</b><span>Controller mode · settings saved with this installation</span>' : '<b>DEMO</b><span>A simulated controller · no physical lights are controlled</span>';
+    if (banner) {
+      const name = window.TL_SERVER_STATE?.controllers?.[window.TL_SERVER_STATE.controller];
+      banner.querySelector('b').textContent = s.mode === 'wled' ? 'WLED' : 'DEMO';
+      banner.querySelector('span').textContent = s.mode === 'wled' ? (name || 'WLED controller') : `${name || 'Demo controller'} · simulated lights`;
+    }
   }
+  addr.addEventListener('input', () => {
+    window.__TLWLED_TEST = null;
+    if (mode.value === 'wled') document.getElementById('applyWled').disabled = true;
+  });
   mode.addEventListener('change', () => {
     const s = read();
     if (mode.value === 'wled' && s.mode !== 'wled') drawRows([]);
-    if (mode.value === 'demo') drawRows(rows.children.length ? readRows() : window.DEMO_DATA.layout.runs.map(r => ({ name: r.name, leds: r.leds, order: 'GRB' })));
+    if (mode.value === 'demo') drawRows(rows.children.length ? readRows() : demoRows());
     document.getElementById('applyWled').disabled = mode.value === 'wled';
     document.getElementById('demoReset').hidden = mode.value === 'wled';
     document.getElementById('addDemoOutput').hidden = mode.value !== 'demo';
     document.getElementById('applyWled').textContent = mode.value === 'wled' ? 'Apply settings & connect' : 'Save demo setup';
   });
-  document.getElementById('testWled').addEventListener('click', async () => {
+  const test = document.getElementById('testWled'), apply = document.getElementById('applyWled');
+  test.addEventListener('click', async () => {
     let host;
     try { host = hostOf(addr.value); } catch (e) { return setStatus(e.message, true); }
+    test.disabled = true;
+    if (mode.value === 'wled') apply.disabled = true;
+    window.__TLWLED_TEST = null;
     setStatus('Connecting to WLED…');
     const ac = new AbortController(), timer = setTimeout(() => ac.abort(), 6000);
     try {
@@ -223,22 +216,27 @@
       ]);
       if (!siRes.ok || !cfgRes.ok) throw new Error(`WLED returned HTTP ${siRes.status || cfgRes.status}.`);
       const si = await siRes.json(), cfg = await cfgRes.json(), info = si.info || {};
+      if (hostOf(addr.value) !== host) throw new Error('The address changed. Test the current address.');
       const ins = cfg.hw?.led?.ins || [];
       if (!ins.length) throw new Error('WLED responded, but no LED outputs were found in /json/cfg.');
       if (ins.length > 6) throw new Error(`WLED reports ${ins.length} outputs; this setup supports 2, 4, or 6 channels.`);
-      const previous = readRows();
-      drawRows(ins.map((x, i) => ({ name: previous[i]?.name || DEFAULT_NAMES[i] || `Output ${i + 1}`, pin: x.pin, leds: x.len, order: x.order || 'GRB', points: previous[i]?.points || [], reverse: previous[i]?.reverse })));
+      const previous = mode.value === 'wled' ? readRows() : [];
+      mode.value = 'wled';
+      drawRows(ins.map((x, i) => ({ name: previous[i]?.name || `Output ${i + 1}`, pin: x.pin, leds: x.len, order: x.order ?? 'GRB', points: previous[i]?.points || [], reverse: previous[i]?.reverse, use: previous[i]?.use })));
       if (cfg.if?.ntp) { lat.value = cfg.if.ntp.lt ?? ''; lon.value = cfg.if.ntp.ln ?? ''; }
-      mode.value = 'wled'; document.getElementById('applyWled').disabled = false;
+      document.getElementById('applyWled').disabled = false;
+      document.getElementById('demoReset').hidden = true;
+      document.getElementById('addDemoOutput').hidden = true;
+      document.getElementById('applyWled').textContent = 'Apply settings & connect';
       const selected = Number(channelCount.value), mismatch = ins.length > selected;
       setStatus(`${info.name || 'WLED controller'} connected · ${info.leds?.count ?? cfg.hw.led.total ?? '?'} LEDs · WLED reports ${ins.length} configured outputs; ${selected} channel capacity.${mismatch ? ' Select a larger controller capacity.' : ' Review the per-channel counts, then apply and connect.'}`, mismatch);
       window.__TLWLED_TEST = { host, info, cfg };
     } catch (e) {
       const message = e.name === 'AbortError' ? 'Connection timed out. Check the address and confirm this page is open over HTTP on the same LAN.' : `Could not connect: ${e.message || 'check the address, network, and WLED API access.'}`;
       setStatus(message, true); window.__TLWLED_TEST = null;
-    } finally { clearTimeout(timer); }
+    } finally { test.disabled = false; clearTimeout(timer); }
   });
-  document.getElementById('applyWled').addEventListener('click', async () => {
+  apply.addEventListener('click', async () => {
     let host, outputs, latitude, longitude, selectedChannels;
     try {
       const isDemo = mode.value === 'demo';
@@ -253,25 +251,32 @@
       if (outputs.some(o => !Number.isInteger(o.leds) || o.leds < 1 || o.leds > 10000) || total > 10000) throw new Error('Enter a whole-number LED count from 1 to 10,000 per channel; the total must not exceed 10,000.');
     } catch (e) { return setStatus(e.message, true); }
     if (mode.value === 'demo') {
+      apply.disabled = true;
       try {
         const saved = read();
         const next = { ...saved, mode: 'demo', host: '', channelCount: Number(channelCount.value), outputs, lat: null, lon: null, timezone: localTimezone() };
         await saveSettings(next);
         setStatus(`Demo setup saved · ${outputs.length} output${outputs.length === 1 ? '' : 's'} configured within the ${next.channelCount}-channel capacity. House photos and traces are saved with this setup.`);
-        setTimeout(() => { history.replaceState(null, '', location.pathname + location.search); location.reload(); }, 500);
-      } catch (e) { setStatus(`Could not save demo settings: ${e.message || e}`, true); }
+        setTimeout(() => location.reload(), 500);
+      } catch (e) { apply.disabled = false; setStatus(`Could not save demo settings: ${e.message || e}`, true); }
       return;
     }
+    apply.disabled = test.disabled = true;
     setStatus('Reading the current WLED configuration…');
     try {
       const cfgRes = await fetch(`http://${host}/json/cfg`, { cache: 'no-store' });
       if (!cfgRes.ok) throw new Error(`WLED returned HTTP ${cfgRes.status}.`);
       const cfg = await cfgRes.json(), ins = cfg.hw?.led?.ins;
       if (!Array.isArray(ins) || ins.length !== outputs.length) throw new Error('The number of rows must match the outputs WLED currently reports. Test the connection again to reload them.');
+      const detected = window.__TLWLED_TEST;
+      if (!detected || detected.host !== host || JSON.stringify(ins.map(bus => bus.pin)) !== JSON.stringify(detected.cfg.hw.led.ins.map(bus => bus.pin))) {
+        throw new Error('Test this controller again to confirm its configured outputs.');
+      }
       let start = 0, changed = false;
       outputs.forEach((o, i) => {
-        if (ins[i].start !== start || ins[i].len !== o.leds || ins[i].order !== o.order) changed = true;
-        ins[i].start = start; ins[i].len = o.leds; ins[i].order = o.order; start += o.leds;
+        const order = typeof ins[i].order === 'number' ? Number(o.order) : o.order;
+        if (ins[i].start !== start || ins[i].len !== o.leds || ins[i].order !== order) changed = true;
+        ins[i].start = start; ins[i].len = o.leds; ins[i].order = order; start += o.leds;
       });
       cfg.hw.led.total = start;
       if (latitude !== null && longitude !== null) {
@@ -280,25 +285,34 @@
         cfg.if.ntp.lt = latitude; cfg.if.ntp.ln = longitude;
       }
       const saved = read();
-      const next = { ...saved, mode: 'wled', host, channelCount: selectedChannels, outputs, lat: latitude, lon: longitude, timezone: localTimezone(), photo: saved.photo || '', photoSize: saved.photoSize || [2000, 1500], houseViews: saved.houseViews || {} };
+      const mac = String(detected.info.mac || '').replace(/[:-]/g, '').toLowerCase();
+      const next = { ...saved, mode: 'wled', host, mac: /^[0-9a-f]{12}$/.test(mac) ? mac : null, channelCount: selectedChannels, outputs, lat: latitude, lon: longitude, timezone: localTimezone(), photo: saved.photo || '', photoSize: saved.photoSize || [2000, 1500], houseViews: saved.houseViews || {} };
+      const payload = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) };
+      const check = await fetch(window.TLApi('/api/settings?validate=1'), payload);
+      if (!check.ok) throw new Error((await check.json().catch(() => ({}))).error || 'The controller settings could not be validated.');
       if (changed) {
         setStatus('Applying channel counts and color order to WLED…');
         const res = await fetch(`http://${host}/json/cfg`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg) });
-        if (!res.ok) throw new Error(`WLED rejected the configuration (HTTP ${res.status}).`);
+        const ack = await res.json().catch(() => null);
+        if (!res.ok || ack?.success !== true) throw new Error(`WLED rejected the configuration (HTTP ${res.status}).`);
       }
-      const stored = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
+      const stored = await fetch(window.TLApi('/api/settings'), payload);
       if (!stored.ok) { const failure = await stored.json().catch(() => ({})); throw new Error(failure.error || `Server could not save the settings (HTTP ${stored.status}).`); }
       write(next);
-      try { localStorage.removeItem('tlstudio-demo-v1'); } catch { }
+      if (!window.TL_SERVER_STATE?.controller || window.TL_SERVER_STATE.controller === 'primary') {
+        try { localStorage.removeItem('tlstudio-demo-v1'); } catch { }
+      }
       setStatus(changed ? 'Settings applied. WLED may restart; reconnecting…' : 'Settings saved. Connecting to WLED…');
       setTimeout(() => location.reload(), changed ? 3500 : 500);
-    } catch (e) { setStatus(`Could not apply settings: ${e.message || e}`, true); }
+    } catch (e) { apply.disabled = test.disabled = false; setStatus(`Could not apply settings: ${e.message || e}`, true); }
   });
   document.getElementById('demoReset').addEventListener('click', async () => {
-    try { localStorage.removeItem('tlstudio-demo-v1'); } catch { }
+    if (!window.TL_SERVER_STATE?.controller || window.TL_SERVER_STATE.controller === 'primary') {
+        try { localStorage.removeItem('tlstudio-demo-v1'); } catch { }
+      }
     const next = { mode: 'demo', host: '', channelCount: 4, outputs: [], photo: '', photoSize: [2000, 1500], timezone: localTimezone() };
     if (window.TL_SERVER_STATE) {
-      const saved = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
+      const saved = await fetch(window.TLApi('/api/settings'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(next) });
       if (!saved.ok) return setStatus('Could not save demo mode to the server.', true);
     }
     write(next); location.reload();
@@ -307,12 +321,12 @@
     if (mode.value !== 'demo') return;
     const outputs = readRows(), capacity = Number(channelCount.value);
     if (outputs.length >= capacity) return setStatus(`All ${capacity} channel slots are already populated.`, true);
-    outputs.push({ name: DEFAULT_NAMES[outputs.length] || `Output ${outputs.length + 1}`, leds: 100, order: 'GRB', pin: '', points: [] });
+    outputs.push({ name: `Output ${outputs.length + 1}`, leds: 100, order: 'GRB', pin: '', points: [] });
     drawRows(outputs); setStatus(`${outputs.length} of ${capacity} channel slots populated. Save demo settings to keep this setup.`);
   });
-  loadForm(); drawMap();
-  if (window.TL_SERVER_STATE && !window.TL_SERVER_STATE.has_settings) {
-    try { const legacy = localStorage.getItem(KEY); if (legacy) fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: legacy }).then(r => { if (r.ok) localStorage.removeItem(KEY); }); } catch { }
+  loadForm();
+  if (window.TL_SERVER_STATE?.controller === 'primary' && !window.TL_SERVER_STATE.has_settings) {
+    try { const legacy = localStorage.getItem(KEY); if (legacy) fetch(window.TLApi('/api/settings'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: legacy }).then(r => { if (r.ok) localStorage.removeItem(KEY); }); } catch { }
   }
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initUI, { once: true }); else initUI();
