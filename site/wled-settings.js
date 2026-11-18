@@ -68,7 +68,7 @@
         const run = runs[line.output - 1];
         if (!run || !(1 <= line.first && line.first <= line.last && line.last <= run.leds)) continue;
         const start = run.start + line.first - 1, stop = run.start + line.last;
-        const zone = { name: line.name, start, stop };
+        const zone = { id: `landscape:${side}:${line.id}`, name: line.name, start, stop };
         layout.landscape.push(zone);
         for (let i = start; i < stop; i++) reserved.add(i);
         if (side === selectedSide.id) visibleLandscape.push({ line, zone });

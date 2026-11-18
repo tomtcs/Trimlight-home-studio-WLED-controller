@@ -98,7 +98,9 @@
     }
     function begin(line) {
       tracing = true; flat = false; editing = line?.id || ''; draft = line ? line.points.map(p => [...p]) : []; wires = line ? [...(line.wireSegments || [])] : []; title = line?.name || ''; kind = line?.kind || 'edge';
-      output = line?.output || 1; first = line?.first ?? ''; last = line?.last ?? ''; render();
+      const landscapeOutput = outputs().findIndex(bus => bus.use === 'landscape');
+      output = line?.output ?? (landscapeOutput >= 0 ? landscapeOutput + 1 : 1);
+      first = line?.first ?? ''; last = line?.last ?? ''; render();
     }
     function bind() {
       host.querySelector('[data-section-looks]')?.addEventListener('click', async () => {
