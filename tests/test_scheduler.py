@@ -243,6 +243,48 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(len(self.controller.writes), 2)
         self.assertTrue(self.controller.presets["241"]["ifon"])
 
+    def test_weekday_preset_waits_for_readback_before_saving_timers(self):
+        delayed = {"reads": 0}
+
+        def wled(base, path, body=None):
+            result = self.controller(base, path, body)
+            if path == "/presets.json" and "244" in result:
+                delayed["reads"] += 1
+                if delayed["reads"] == 1:
+                    result.pop("244")
+            return result
+
+        timers = [{"en": 1, "hour": 254, "min": 0, "macro": 244, "dow": 64}]
+        request = {"schedule": self.schedule, "expectedSchedule": self.schedule,
+                   "presets": [{"slot": 244, "body": self.body, "name": "Sunday"}], "timers": timers}
+        with patch.object(server, "wled_json", wled), patch.object(server.time, "sleep"):
+            status, result = self.post("/api/schedule/save", request)
+
+        self.assertEqual((status, result.get("timers")), (200, 1))
+        self.assertEqual(self.controller.config["timers"]["ins"], timers)
+        self.assertEqual(sum(body.get("psstore") == 244 for _, body in self.controller.writes), 1)
+
+    def test_weekday_preset_mismatch_reports_field_and_does_not_save_timers(self):
+        def wled(base, path, body=None):
+            result = self.controller(base, path, body)
+            if path == "/presets.json" and "244" in result:
+                result["244"]["seg"][0]["stop"] = 700
+            return result
+
+        changed = {**self.schedule, "onMode": "time"}
+        timers = [{"en": 1, "hour": 17, "min": 0, "macro": 244, "dow": 64}]
+        request = {"schedule": changed, "expectedSchedule": self.schedule,
+                   "presets": [{"slot": 244, "body": self.body, "name": "Sunday"}], "timers": timers}
+        with patch.object(server, "wled_json", wled), patch.object(server.time, "sleep"):
+            status, result = self.post("/api/schedule/save", request)
+
+        self.assertEqual(status, 400)
+        self.assertIn("preset 244: segment 0 stop differs", result["error"])
+        self.assertEqual(self.controller.config["timers"]["ins"], [])
+        self.assertEqual(len(self.controller.writes), 1)
+        with server.database() as conn:
+            self.assertEqual(server.read_state(conn, "app")["schedule"], self.schedule)
+
     def test_schedule_save_keeps_led_settings_and_skips_unchanged_writes(self):
         timers = [{"en": 1, "hour": 254, "min": -5, "macro": 240, "dow": 127}]
         request = {"schedule": self.schedule, "expectedSchedule": self.schedule, "timers": timers, "presets": []}

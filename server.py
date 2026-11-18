@@ -237,9 +237,11 @@ def preset_command(body, name):
     return command
 
 
-def preset_matches(stored, expected, *, legacy=False):
+def preset_mismatch(stored, expected, *, legacy=False):
+    if stored is None:
+        return "slot missing from /presets.json"
     if not isinstance(stored, dict):
-        return False
+        return "saved slot is not a preset object"
     for key, value in expected.items():
         if legacy and "playlist" in expected and key == "bri":
             # Stock WLED serializes the playlist and power, without master brightness.
@@ -247,7 +249,7 @@ def preset_matches(stored, expected, *, legacy=False):
         if legacy and key == "playlist":
             playlist = stored.get(key)
             if not isinstance(playlist, dict):
-                return False
+                return "saved playlist is missing"
             wanted = dict(value)
             actual = {field: playlist.get(field) for field in value}
             if wanted.get("r"):
@@ -255,24 +257,28 @@ def preset_matches(stored, expected, *, legacy=False):
                 fields = ("ps", "dur", "transition")
                 steps = [actual.get(field) for field in fields]
                 if any(not isinstance(step, list) or len(step) != len(wanted["ps"]) for step in steps):
-                    return False
+                    return "saved playlist has a different step count"
                 if sorted(zip(*steps)) != sorted(zip(*(wanted[field] for field in fields))):
-                    return False
+                    return "saved playlist steps differ"
                 for field in fields:
                     del wanted[field], actual[field]
-            if actual != wanted:
-                return False
+            for field in wanted:
+                if actual[field] != wanted[field]:
+                    return f"playlist {field} differs"
             continue
         if key != "seg":
             if stored.get(key) != value:
-                return False
+                detail = "differs" if key in stored else "is missing"
+                return f"{key} {detail}"
             continue
         actual = stored.get("seg")
-        if not isinstance(actual, list) or len(actual) != len(value):
-            return False
+        if not isinstance(actual, list):
+            return "saved segment list is missing"
+        if len(actual) != len(value):
+            return f"expected {len(value)} segments, read back {len(actual)}"
         for index, (got, want) in enumerate(zip(actual, value)):
             if not isinstance(got, dict):
-                return False
+                return f"segment {index} is not an object"
             for field, item in want.items():
                 other = got.get(field, index if field == "id" else None)
                 if field == "slow" and item == 1 and other is None:
@@ -282,8 +288,13 @@ def preset_matches(stored, expected, *, legacy=False):
                     if rgbw(other) == rgbw(item):
                         continue
                 if other != item:
-                    return False
-    return True
+                    detail = "differs" if field in got else "is missing"
+                    return f"segment {want.get('id', index)} {field} {detail}"
+    return None
+
+
+def preset_matches(stored, expected, *, legacy=False):
+    return preset_mismatch(stored, expected, legacy=legacy) is None
 
 
 def make_schedule_fingerprint(host, selection):
@@ -313,30 +324,48 @@ def restore_wled_state(base, previous):
         wled_json(base, "/json/state", {"ps": previous["pl"]})
 
 
+def verify_wled_preset(base, slot, command, *, legacy):
+    # The write acknowledgment and visibility through /presets.json can be separated by a WLED loop iteration.
+    for delay in (0, 0.1, 0.25, 0.5):
+        if delay:
+            time.sleep(delay)
+        try:
+            stored = stored_preset(base, slot)
+        except ValueError as exc:
+            detail = f"could not read /presets.json: {exc}"
+        else:
+            detail = preset_mismatch(stored, command, legacy=legacy)
+            if detail is None:
+                return
+    raise ValueError(f"WLED did not verify preset {slot}: {detail}.")
+
+
 def store_wled_preset(base, slot, command, non_applying, *, existing=None):
     before = stored_preset(base, slot) if existing is None else existing.get(str(slot))
     if preset_matches(before, command, legacy=not non_applying):
         return False
     if non_applying:
+        write_error = None
         try:
             wled_json(base, "/json/state", {"psstore": slot, "preset": command})
-        except ValueError:
-            # A timed-out response can mean the write completed. Check before retrying.
-            if not preset_matches(stored_preset(base, slot), command):
-                raise
-            return True
+        except ValueError as exc:
+            # A lost acknowledgment can mean the write completed. Read back before attempting another write.
+            write_error = exc
+        try:
+            verify_wled_preset(base, slot, command, legacy=False)
+        except ValueError as exc:
+            if write_error is not None:
+                raise ValueError(f"{exc} Write response: {write_error}") from write_error
+            raise
     else:
         # Stock WLED and older Studio firmware apply the command while storing it.
         previous = wled_json(base, "/json/state")
         try:
             wled_json(base, "/json/state", {**command, "psave": slot, "ib": True, "sb": True, "o": True})
-            if "playlist" in command:
-                # Older WLED saves playlists asynchronously.
-                time.sleep(0.4)
+            # Playlist serialization can happen asynchronously and uses the active playlist.
+            verify_wled_preset(base, slot, command, legacy=True)
         finally:
             restore_wled_state(base, previous)
-    if not preset_matches(stored_preset(base, slot), command, legacy=not non_applying):
-        raise ValueError(f"WLED did not verify preset {slot}.")
     return True
 
 
