@@ -324,6 +324,23 @@ def restore_wled_state(base, previous):
         wled_json(base, "/json/state", {"ps": previous["pl"]})
 
 
+def stored_preset_mismatch(slot, stored, command, *, legacy):
+    if not 240 <= slot <= 250:
+        return preset_mismatch(stored, command, legacy=legacy)
+
+    # Calendar slots are selected by number. Their display names do not affect playback.
+    playback = {key: value for key, value in command.items() if key != "n"}
+    mismatch = preset_mismatch(stored, playback, legacy=legacy)
+    if mismatch is not None:
+        return mismatch
+
+    # WLED may retain save options or a quick-load label. Other extra commands could change playback.
+    unexpected = stored.keys() - playback.keys() - {"n", "ql", "ib", "sb", "sc"}
+    if unexpected:
+        return f"unexpected preset field {min(unexpected)}"
+    return None
+
+
 def verify_wled_preset(base, slot, command, *, legacy):
     # The write acknowledgment and visibility through /presets.json can be separated by a WLED loop iteration.
     for delay in (0, 0.1, 0.25, 0.5):
@@ -334,7 +351,7 @@ def verify_wled_preset(base, slot, command, *, legacy):
         except ValueError as exc:
             detail = f"could not read /presets.json: {exc}"
         else:
-            detail = preset_mismatch(stored, command, legacy=legacy)
+            detail = stored_preset_mismatch(slot, stored, command, legacy=legacy)
             if detail is None:
                 return
     raise ValueError(f"WLED did not verify preset {slot}: {detail}.")
@@ -342,7 +359,7 @@ def verify_wled_preset(base, slot, command, *, legacy):
 
 def store_wled_preset(base, slot, command, non_applying, *, existing=None):
     before = stored_preset(base, slot) if existing is None else existing.get(str(slot))
-    if preset_matches(before, command, legacy=not non_applying):
+    if stored_preset_mismatch(slot, before, command, legacy=not non_applying) is None:
         return False
     if non_applying:
         write_error = None
