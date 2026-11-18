@@ -49,8 +49,8 @@ if (requested && (!window.TL_SERVER_STATE || scope !== window.TL_SERVER_STATE.co
       button.disabled = false;
     }
   });
-  await import('./wled-settings.js?v=landscape-1');
-  await import('./house-mapper.js?v=landscape-1');
+  await import('./wled-settings.js?v=landscape-2');
+  await import('./house-mapper.js?v=landscape-2');
   await import('./demo-shim.js?v=landscape-1');
   await import('./app.js?v=landscape-1');
   await import('./backup.js?v=landscape-1');
