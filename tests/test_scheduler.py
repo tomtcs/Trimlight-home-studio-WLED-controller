@@ -173,6 +173,38 @@ class SchedulerTests(unittest.TestCase):
         self.assertEqual(len(self.controller.writes), 1)
         self.assertEqual(server.scheduler_runtime().status["state"], "ready")
 
+    def test_calendar_accepts_matching_playback_when_wled_reports_another_name(self):
+        program = {"name": "November", "start": "2020-01-01", "end": "2099-12-31", "body": self.body}
+        self.post("/api/app", {"schedule": {**self.schedule, "programs": [program]}})
+
+        def wled(base, path, body=None):
+            result = self.controller(base, path, body)
+            if path == "/presets.json" and "240" in result:
+                result["240"]["n"] = "Previous calendar label"
+            return result
+
+        with patch.object(server, "wled_json", wled), patch.object(server.time, "sleep"):
+            server.scheduler_tick()
+            runtime = server.scheduler_runtime()
+            self.assertEqual(runtime.status["state"], "active")
+            self.assertEqual(runtime.status["program"], "November")
+            runtime.reset()
+            server.scheduler_tick()
+
+        self.assertEqual(len(self.controller.writes), 1)
+        self.assertEqual(runtime.status["message"], "Verified November in WLED preset 240.")
+
+    def test_calendar_ignores_only_name_and_save_metadata(self):
+        command = server.preset_command(self.body, "Studio · November")
+        saved = {**copy.deepcopy(command), "n": "Other name", "ib": True, "sb": True}
+        self.assertIsNone(server.stored_preset_mismatch(240, saved, command, legacy=True))
+        self.assertEqual(server.stored_preset_mismatch(3, saved, command, legacy=True), "n differs")
+        saved["seg"][0]["fx"] += 1
+        self.assertEqual(server.stored_preset_mismatch(240, saved, command, legacy=True), "segment 0 fx differs")
+        saved["seg"][0]["fx"] -= 1
+        saved["nl"] = {"on": True}
+        self.assertEqual(server.stored_preset_mismatch(240, saved, command, legacy=True), "unexpected preset field nl")
+
     def test_preset_comparison_checks_every_requested_field(self):
         command = server.preset_command(self.body, "Flag")
         stale = copy.deepcopy(command)
