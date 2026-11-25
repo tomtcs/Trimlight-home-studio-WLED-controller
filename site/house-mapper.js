@@ -80,10 +80,13 @@
         const landscape = line.kind === 'landscape', label = kindLabel[line.kind], name = line.name || `${label} ${i + 1}`;
         const range = landscape ? ` · Output ${line.output}, bulbs ${line.first}–${line.last}` : '';
         const disabled = busy || tracing ? 'disabled' : '';
+        const rgbw = outputs()[line.output - 1]?.rgbw === true;
         const controls = landscape ? `<form class="hm-zone-controls" data-control-line="${escape(line.id)}" aria-label="Control ${escape(name)}">
           <label>Color<input name="color" type="color" value="#ffb86b" ${disabled}></label>
+          ${rgbw ? `<label>White mix %<input name="white" type="number" value="0" min="0" max="100" step="1" required ${disabled}></label>` : ''}
           <label>Brightness %<input name="brightness" type="number" value="50" min="1" max="100" step="1" required ${disabled}></label>
           <button class="hm-button" type="submit" ${disabled}>Apply color</button>
+          ${rgbw ? `<button class="hm-button" type="submit" value="white" ${disabled}>White only</button>` : ''}
           <button class="hm-button" type="submit" value="off" formnovalidate ${disabled}>Turn off</button>
         </form>` : '';
         return `<div class="hm-line-row"><span><b>${escape(name)}</b><small>${label}${range} · ${line.points.length} point${line.points.length === 1 ? '' : 's'}</small></span><span><button type="button" class="hm-small" data-edit-line="${escape(line.id)}" ${disabled}>Adjust</button><button type="button" class="hm-small danger" data-remove-line="${escape(line.id)}" ${disabled}>Remove</button></span>${controls}</div>`;
@@ -118,18 +121,21 @@
       host.querySelectorAll('[data-control-line]').forEach(form => form.addEventListener('submit', async event => {
         event.preventDefault();
         const buttons = [...form.querySelectorAll('button')];
-        const brightness = event.submitter?.value === 'off' ? 0 : Math.round(Number(form.elements.brightness.value) * 255 / 100);
+        const action = event.submitter?.value;
+        const brightness = action === 'off' ? 0 : Math.round(Number(form.elements.brightness.value) * 255 / 100);
+        const white = action === 'white' ? 255 : brightness ? Math.round(Number(form.elements.white?.value || 0) * 255 / 100) : 0;
+        const color = action === 'white' ? '#000000' : form.elements.color.value;
         buttons.forEach(button => { button.disabled = true; });
         status('Updating landscape lights…');
         try {
           const response = await fetch(window.TLApi('/api/controller/landscape'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ side, line: form.dataset.controlLine, brightness, color: form.elements.color.value }),
+            body: JSON.stringify({ side, line: form.dataset.controlLine, brightness, color, white }),
           });
           const result = await response.json();
           if (!response.ok) throw new Error(result.error || 'WLED could not update the section.');
-          status(brightness ? 'Landscape color applied.' : 'Landscape section turned off.');
+          status(brightness ? (action === 'white' ? 'Dedicated white applied.' : 'Landscape color applied.') : 'Landscape section turned off.');
         } catch (error) { status(error.message); }
         finally { buttons.forEach(button => { button.disabled = false; }); }
       }));

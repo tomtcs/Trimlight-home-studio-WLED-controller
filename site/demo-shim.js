@@ -15,11 +15,13 @@
   const segDefaults = (k) => ({ id: k, start: 0, stop: N, grp: 1, spc: 0, of: 0, on: true, bri: 255, fx: 0, sx: 128, ix: 128, c1: 128, c2: 128, c3: 16, o1: false, o2: false, o3: false, pal: 0, col: [[255, 160, 0], [0, 0, 0], [0, 0, 0]], rev: false, mi: false, slow: 1, n: '' });
   const inst = [];   // engine instance per segment
   const colHex = c => typeof c === 'string' ? [1, 3, 5].map(i => parseInt(c.substr(i - 1, 2), 16)) : c;
+  // Simulate the dedicated white emitter in the RGB-only live preview.
+  const displayColor = ([r, g, b, w = 0]) => [r + w, g + Math.round(w * 0.91), b + Math.round(w * 0.8)].map(value => Math.min(255, value));
   function applySeg(s) {
     const k = s.id ?? st.seg.length; let g = st.seg[k];
     if (s.stop === 0) { if (g) st.seg[k] = null; return; }
     if (!g) g = st.seg[k] = segDefaults(k);
-    for (const key in s) if (key !== 'id') g[key] = key === 'col' ? s.col.map(c => Array.isArray(c) ? c.slice(0, 3) : colHex(c)) : s[key];
+    for (const key in s) if (key !== 'id') g[key] = key === 'col' ? s.col.map(c => Array.isArray(c) ? c.slice(0, 4) : colHex(c)) : s[key];
   }
   let plTimer = null, plRun = null;
   function stopPlaylist() { clearTimeout(plTimer); plTimer = null; plRun = null; st.pl = -1; }
@@ -60,7 +62,7 @@
           mods: (g.mod || []).map(m => ({ target: MT[m[0]] || 'opacity', shape: MS[m[1]] || 'sine', depth: m[2], phase: m[3], per: m[4] / 1000 })),
           stops: (g.tlc && g.tlc.length ? g.tlc : [[255, 140, 30, 0]]).map(c => [c[3] / 255, [c[0], c[1], c[2]]]), cmode: 'gradient' };
         L.src = type ? { kind: 'shape', type, p: B.SHAPES[type].dec({ sx: g.sx, ix: g.ix, c1: g.c1, c2: g.c2, c3: g.c3, o1: !!g.o1, o2: !!g.o2 }) }
-                     : { kind: 'fx', fx: TL.supported.includes(g.fx) ? g.fx : 0, sx: g.sx, ix: g.ix, c1: g.c1, c2: g.c2, c3: g.c3, o1: g.o1, o2: g.o2, o3: g.o3, pal: g.pal, col: g.col };
+                     : { kind: 'fx', fx: TL.supported.includes(g.fx) ? g.fx : 0, sx: g.sx, ix: g.ix, c1: g.c1, c2: g.c2, c3: g.c3, o1: g.o1, o2: g.o2, o3: g.o3, pal: g.pal, col: g.col.map(displayColor) };
         return L; }) } };
     }
     const buf = B.render(stkView, stk, now);   // screen space → what WLED 0.15 sends (post-gamma)
@@ -73,7 +75,7 @@
     st.seg.forEach((g, k) => {
       if (!g || !g.on) return; const len = Math.max(0, Math.min(N, g.stop) - g.start); if (!len) return;
       let it = inst[k]; if (!it || it.fx !== g.fx || it.len !== len) it = inst[k] = { fx: g.fx, len, e: TL.create(TL.supported.includes(g.fx) ? g.fx : 0, len) };
-      const raw = it.e.render({ sx: g.sx, ix: g.ix, c1: g.c1, c2: g.c2, c3: g.c3, o1: g.o1, o2: g.o2, o3: g.o3, pal: g.pal, col: g.col, grp: g.grp, spc: g.spc, rev: g.rev, mi: g.mi, of: g.of, bri: g.bri, slow: g.slow || 1 }, now);
+      const raw = it.e.render({ sx: g.sx, ix: g.ix, c1: g.c1, c2: g.c2, c3: g.c3, o1: g.o1, o2: g.o2, o3: g.o3, pal: g.pal, col: g.col.map(displayColor), grp: g.grp, spc: g.spc, rev: g.rev, mi: g.mi, of: g.of, bri: g.bri, slow: g.slow || 1 }, now);
       for (let i = 0; i < len * 3; i++) if (raw[i]) out[g.start * 3 + i] = raw[i];
     });
     return frame;

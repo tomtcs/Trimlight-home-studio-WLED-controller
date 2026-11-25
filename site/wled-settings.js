@@ -7,6 +7,13 @@
     [[0.10, 0.51], [0.42, 0.52]], [[0.42, 0.52], [0.78, 0.52]],
     [[0.10, 0.61], [0.42, 0.62]], [[0.42, 0.62], [0.78, 0.61]]
   ];
+  // WLED /json/cfg LED bus types with both RGB and white channels.
+  const RGBW_BUS_TYPES = new Set([28, 29, 30, 31, 32, 34, 35, 44, 45, 88, 89]);
+  function whiteCapabilities(ledConfig, bus) {
+    const globalMode = ledConfig.rgbwm ?? 255;
+    const mode = globalMode === 255 ? (bus.rgbwm ?? 0) : globalMode;
+    return { rgbw: RGBW_BUS_TYPES.has(bus.type), manualWhite: mode === 0 || mode === 3 };
+  }
   const DEFAULT_NAMES = ['Front gable', 'Main eave', 'Garage edge', 'Lower eave', 'Porch line', 'Side eave'];
   const clone = x => JSON.parse(JSON.stringify(x));
   const localTimezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -51,7 +58,7 @@
       runs = s.outputs.slice(0, 6).map((o, i) => ({
         id: i + 1, name: o.name || `Output ${i + 1}`, port: i + 1,
         points: Array.isArray(o.points) && o.points.length >= 2 ? clone(o.points) : clone(ROUTES[i] || ROUTES[ROUTES.length - 1]),
-        leds: Math.max(1, Math.min(10000, Number(o.leds) || 1)), auto: false, reverse: !!o.reverse, landscape: o.use === 'landscape'
+        leds: Math.max(1, Math.min(10000, Number(o.leds) || 1)), auto: false, reverse: !!o.reverse, landscape: o.use === 'landscape', rgbw: o.rgbw === true, manualWhite: o.manualWhite
       }));
     }
     const layout = { ...fallback, photo, photoSize, runs, landscape: [] };
@@ -145,8 +152,8 @@
     const orders = /^\d+$/.test(order) ? ['0', '1', '2', '3', '4', '5'] : ['RGB', 'RBG', 'GRB', 'GBR', 'BRG', 'BGR'];
     const labels = ['GRB', 'RGB', 'BRG', 'RBG', 'BGR', 'GBR'];
     if (!orders.includes(order)) orders.push(order);
-    return `<div class="wled-output" data-output="${i}" data-points="${esc(JSON.stringify(o.points || []))}" data-reverse="${o.reverse ? '1' : '0'}">
-      <label>Output ${i + 1} name<input data-name value="${esc(o.name || DEFAULT_NAMES[i] || `Output ${i + 1}`)}" maxlength="24"></label>
+    return `<div class="wled-output" data-output="${i}" data-rgbw="${o.rgbw === true ? 1 : 0}" data-points="${esc(JSON.stringify(o.points || []))}" data-reverse="${o.reverse ? '1' : '0'}">
+      <label>Output ${i + 1} name${o.rgbw === true ? ' · RGBW' : ''}<input data-name value="${esc(o.name || DEFAULT_NAMES[i] || `Output ${i + 1}`)}" maxlength="24"></label>
       <label>GPIO pin<input data-pin value="${esc(Array.isArray(o.pin) ? o.pin.join(', ') : o.pin ?? '')}" readonly aria-label="WLED output pin"></label>
       <label>LEDs on channel<input data-leds type="number" min="1" max="10000" step="1" value="${Math.max(1, Number(o.leds) || 1)}" required></label>
       <label>Lighting use<select data-use><option value="roof"${o.use !== 'landscape' ? ' selected' : ''}>Roofline</option><option value="landscape"${o.use === 'landscape' ? ' selected' : ''}>Landscape</option></select></label>
@@ -167,7 +174,7 @@
       leds: Number(r.querySelector('[data-leds]').value),
       order: r.querySelector('[data-order]').value,
       use: r.querySelector('[data-use]').value,
-      points: JSON.parse(r.dataset.points || '[]'), reverse: r.dataset.reverse === '1'
+      rgbw: r.dataset.rgbw === '1', points: JSON.parse(r.dataset.points || '[]'), reverse: r.dataset.reverse === '1'
     }));
   }
   const demoRows = () => window.DEMO_DATA.layout.runs.slice(0, Number(channelCount.value)).map(r => ({ name: r.name, leds: r.leds, pin: '', order: 'GRB' }));
@@ -222,7 +229,7 @@
       if (ins.length > 6) throw new Error(`WLED reports ${ins.length} outputs; this setup supports 2, 4, or 6 channels.`);
       const previous = mode.value === 'wled' ? readRows() : [];
       mode.value = 'wled';
-      drawRows(ins.map((x, i) => ({ name: previous[i]?.name || `Output ${i + 1}`, pin: x.pin, leds: x.len, order: x.order ?? 'GRB', points: previous[i]?.points || [], reverse: previous[i]?.reverse, use: previous[i]?.use })));
+      drawRows(ins.map((x, i) => ({ name: previous[i]?.name || `Output ${i + 1}`, pin: x.pin, leds: x.len, order: x.order ?? 'GRB', ...whiteCapabilities(cfg.hw.led, x), points: previous[i]?.points || [], reverse: previous[i]?.reverse, use: previous[i]?.use })));
       if (cfg.if?.ntp) { lat.value = cfg.if.ntp.lt ?? ''; lon.value = cfg.if.ntp.ln ?? ''; }
       document.getElementById('applyWled').disabled = false;
       document.getElementById('demoReset').hidden = true;
@@ -274,6 +281,7 @@
       }
       let start = 0, changed = false;
       outputs.forEach((o, i) => {
+        Object.assign(o, whiteCapabilities(cfg.hw.led, ins[i]));
         const order = typeof ins[i].order === 'number' ? Number(o.order) : o.order;
         if (ins[i].start !== start || ins[i].len !== o.leds || ins[i].order !== order) changed = true;
         ins[i].start = start; ins[i].len = o.leds; ins[i].order = order; start += o.leds;
