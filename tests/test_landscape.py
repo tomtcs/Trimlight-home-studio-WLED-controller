@@ -106,6 +106,63 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(segment["col"][0], [255, 128, 0])
         self.assertNotIn("bri", updates[0])
 
+    def test_white_is_sent_only_to_the_configured_rgbw_landscape_bus(self):
+        settings = settings_for("10.1.50.250", (200, 300, 224, 16))
+        settings["houseViews"] = {"front": {"lines": [landscape_line()]}}
+        self.assertEqual(self.post("/api/settings", settings, primary=True)[0], 200)
+        roof = {"id": 0, "start": 0, "stop": 724, "fx": 8, "on": True, "col": [[15, 30, 60]]}
+        land = {"id": 1, "start": 725, "stop": 729, "fx": 0, "on": True, "frz": True}
+        current = {"on": True, "bri": 150, "pl": -1, "seg": [roof, land]}
+        led_config = {"rgbwm": 255, "ins": [
+            {"start": start, "len": count, "type": 22}
+            for start, count in ((0, 200), (200, 300), (500, 224), (724, 16))
+        ]}
+        updates = []
+
+        def device(base, path, body=None):
+            if path == "/json/info":
+                return {"leds": {"maxseg": 32, "lc": 3}}
+            if path == "/json/cfg":
+                return {"hw": {"led": led_config}}
+            if body is not None:
+                updates.append(body)
+                land.update(copy.deepcopy(body["seg"][0]))
+                # WLED can return a fourth component even for colors with white set to zero.
+                land["col"] = [color + [0] * (4 - len(color)) for color in land["col"]]
+                return {"success": True}
+            return copy.deepcopy(current)
+
+        payload = {"side": "front", "line": "path", "color": "#000000", "brightness": 128, "white": 255}
+
+        def apply(**changes):
+            return self.post("/api/controller/landscape", {**payload, **changes}, primary=True)
+
+        with patch.object(server, "wled_json", side_effect=device):
+            status, response = apply()
+            self.assertEqual(status, 400)
+            self.assertIn("no dedicated white channel", response["error"])
+            led_config["ins"][3].update(type=30, rgbwm=2)
+            status, response = apply()
+            self.assertEqual(status, 400)
+            self.assertIn("auto white", response["error"])
+            led_config["ins"][3]["rgbwm"] = 0
+            led_config["rgbwm"] = 4
+            self.assertEqual(apply()[0], 400)
+            self.assertFalse(updates)
+            led_config["rgbwm"] = 3
+            self.assertEqual(apply()[0], 200)
+            self.assertEqual(updates[-1]["seg"][0]["col"][0], [0, 0, 0, 255])
+            self.assertEqual((land["id"], land["bri"], land["frz"]), (1, 128, False))
+            self.assertEqual(apply(color="#4080ff", white=102)[0], 200)
+            self.assertEqual(updates[-1]["seg"][0]["col"][0], [64, 128, 255, 102])
+            self.assertEqual(apply(color="#ff8000", white=0)[0], 200)
+            self.assertEqual(land["col"][0], [255, 128, 0, 0])
+            for white in (-1, 256, True, 17.5, "128"):
+                with self.subTest(white=white):
+                    self.assertEqual(apply(white=white)[0], 400)
+        self.assertEqual(len(updates), 3)
+        self.assertEqual(current["seg"][0], roof)
+
     def test_landscape_ranges_must_be_valid_and_disjoint_across_views(self):
         settings = settings_for("10.1.50.250", (200, 300, 224, 16))
         settings["houseViews"] = {

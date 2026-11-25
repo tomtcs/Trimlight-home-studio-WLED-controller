@@ -461,7 +461,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
       </div>
       <div class="schcard"><div class="sl"><span>Name</span><input type="text" id="secName" value="My split look"><span></span></div>
         <div id="secParts"></div>
-        <p class="sh">Each section runs its own look from the library, with its own direction and speed. The controller gets one segment per section (max 32).</p></div>
+        <p class="sh">Choose a library look or dedicated white for each compatible landscape section. WLED supports up to 32 segments in a Section look.</p></div>
     </div>
   </div>
 </section>
@@ -564,7 +564,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .part .ph{display:flex;justify-content:space-between;gap:8px;align-items:center}.part .ph b{font:600 14px "Space Grotesk",Inter,sans-serif}
 .part .rg{font-size:12px;color:#98a79d;display:flex;gap:6px;align-items:center;margin:4px 0 8px}.part .rg input{width:56px}
 .part select{width:100%}
-.part .opts{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
+.part .opts[hidden]{display:none}.part .opts{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}
 .part .x{background:none;border:0;color:#6f8175;cursor:pointer;font-size:16px}
 #secParts{display:flex;flex-direction:column;gap:8px}
 .plgrid{display:grid;grid-template-columns:280px 1fr;gap:18px;align-items:start}
@@ -780,6 +780,6 @@ body:before{content:"";position:fixed;inset:0 0 auto;height:5px;background:var(-
 
 <link rel="stylesheet" href="mobile.css?v=1">
 <link rel="stylesheet" href="landscape.css?v=1">
-<script type="module" src="controllers.js?v=2"></script>
+<script type="module" src="controllers.js?v=3"></script>
 <script src="mobile.js?v=1"></script>
 </body></html>

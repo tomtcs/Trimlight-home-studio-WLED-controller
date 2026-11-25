@@ -570,6 +570,8 @@ def validate_settings(settings):
             raise ValueError("Each output must be an object.")
         if output.get("use", "roof") not in ("roof", "landscape"):
             raise ValueError("Select roofline or landscape lighting for each output.")
+        if any(flag in output and type(output[flag]) is not bool for flag in ("rgbw", "manualWhite")):
+            raise ValueError("RGBW output capabilities must be true or false.")
         leds = output.get("leds")
         if not isinstance(leds, int) or isinstance(leds, bool) or not 1 <= leds <= 10000:
             raise ValueError("Each output must have between 1 and 10,000 LEDs.")
@@ -655,7 +657,11 @@ def validate_settings(settings):
 
 
 
-def landscape_command(state, start, stop, color, brightness, limit):
+# WLED /json/cfg LED bus types with both RGB and white channels.
+RGBW_BUS_TYPES = {28, 29, 30, 31, 32, 34, 35, 44, 45, 88, 89}
+
+
+def landscape_command(state, start, stop, color, brightness, limit, white=0):
     if brightness and not state.get("on"):
         raise ValueError("Turn on controller power before lighting a landscape section.")
     if state.get("pl", -1) >= 0 or state.get("live"):
@@ -674,8 +680,10 @@ def landscape_command(state, start, stop, color, brightness, limit):
     zone = {"start": start, "stop": stop, "on": bool(brightness)}
     if brightness:
         rgb = [int(color[i:i + 2], 16) for i in (1, 3, 5)]
+        if white:
+            rgb.append(white)
         zone.update(fx=0, pal=0, col=[rgb, [0, 0, 0], [0, 0, 0]], bri=brightness,
-                    grp=1, spc=0, of=0, rev=False, mi=False)
+                    grp=1, spc=0, of=0, rev=False, mi=False, frz=False)
     if not overlapping:
         return [{**zone, "id": allocate()}] if brightness else []
     if len(overlapping) == 1:
@@ -706,28 +714,44 @@ def control_landscape(settings, request):
     color, brightness = request.get("color"), request.get("brightness")
     if not isinstance(color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", color) or type(brightness) is not int or not 0 <= brightness <= 255:
         raise ValueError("Choose a color and a brightness from 0 to 255.")
+    white = request.get("white", 0)
+    if type(white) is not int or not 0 <= white <= 255:
+        raise ValueError("Choose a white level from 0 to 255.")
     outputs = settings["outputs"]
-    offset = sum(bus["leds"] for bus in outputs[:line["output"] - 1])
+    output_index = line["output"] - 1
+    offset = sum(bus["leds"] for bus in outputs[:output_index])
     start, stop = offset + line["first"] - 1, offset + line["last"]
     if settings.get("mode") == "demo":
         state = request.get("demoState")
         if not isinstance(state, dict):
             raise ValueError("The demo controller is unavailable.")
-        return {"ok": True, "segments": landscape_command(state, start, stop, color, brightness, 32)}
+        if brightness and white and outputs[output_index].get("rgbw") is not True:
+            raise ValueError("This landscape output has no dedicated white channel.")
+        return {"ok": True, "segments": landscape_command(state, start, stop, color, brightness, 32, white=white)}
     base = wled_base(settings["host"])
     info = wled_json(base, "/json/info")
     config = wled_json(base, "/json/cfg")
-    bus = config.get("hw", {}).get("led", {}).get("ins", [])
+    led_config = config.get("hw", {}).get("led", {})
+    bus = led_config.get("ins", [])
     if len(bus) != len(outputs) or any(
         item.get("start") != sum(out["leds"] for out in outputs[:index]) or item.get("len") != outputs[index]["leds"]
         for index, item in enumerate(bus)
     ):
         raise ValueError("WLED output counts or start positions changed. Test and save the controller setup again.")
+    if brightness and white:
+        target = bus[output_index]
+        if target.get("type") not in RGBW_BUS_TYPES:
+            raise ValueError("This landscape output has no dedicated white channel in WLED. Check its LED type.")
+        white_mode = led_config.get("rgbwm", 255)
+        if white_mode == 255:
+            white_mode = target.get("rgbwm", 0)
+        if white_mode not in (0, 3):
+            raise ValueError("In WLED LED Preferences, set auto white to None or Dual for this output and check the global override.")
     state = wled_json(base, "/json/state")
     if info.get("live") or info.get("leds", {}).get("matrix"):
         raise ValueError("Landscape control requires a 1D output with no live input.")
     limit = min(64, int(info.get("leds", {}).get("maxseg") or 32))
-    segments = landscape_command(state, start, stop, color, brightness, limit)
+    segments = landscape_command(state, start, stop, color, brightness, limit, white=white)
     if segments:
         wled_json(base, "/json/state", {"seg": segments, "udpn": {"nn": True}})
         verified = wled_json(base, "/json/state")

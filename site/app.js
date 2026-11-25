@@ -130,6 +130,7 @@
   }
   const usesPal = fx => fxMeta(fx).pal;
   const BLACK = [0, 0, 0];
+  const WHITE_ONLY = [0, 0, 0, 255];
   function paletteStops(P) {
     const seq = []; for (let k = 0; k < (P.rep || 1); k++) seq.push(...P.colors);
     if (!P.blend) { const B = seq.length, st = []; seq.forEach((c, b) => st.push([Math.round(b * 256 / B), c], [Math.min(255, Math.round((b + 1) * 256 / B) - 1), c])); return st.slice(0, 18); }
@@ -191,6 +192,10 @@
   // ---- sections: one look per part of the roof (P.parts = [{start, stop, look, dir 'n'|'r'|'m', speed ×}]) ----
   const isSec = P => !!(P && P.parts && P.parts.length);
   function partP(pt) {   // the part's look as the roof runs it: its library look (gallery adjustments applied) + this part's direction/speed
+    if (pt.white) {
+      // Approximate the fixture's white emitter on the RGB preview.
+      return { fx: 0, sx: 128, ix: 128, pal: 0, col: [[255, 232, 204], BLACK, BLACK], bri: Math.round(pt.white * 255 / 100) };
+    }
     const base = (BY_ID[pt.look] && !isSec(BY_ID[pt.look].P)) ? BY_ID[pt.look].P : pt.P;
     const q = applyMaster(base || { fx: 0, sx: 128, ix: 128, pal: 0, col: [[255, 80, 0], BLACK, BLACK], bri: 180 });
     q.rev = pt.dir === 'r'; q.mi = pt.dir === 'm';
@@ -209,7 +214,12 @@
         });
       } else {
         const e = effective(q); if (e.cpal) e.pal = CPAL(slotFor(e.cpal));
-        segs.push(segFor(e, segs.length, { start: pt.start, stop: pt.stop, bri: sb, n: (pt.name || '').slice(0, 30) }));
+        const segment = segFor(e, segs.length, { start: pt.start, stop: pt.stop, bri: sb, n: (pt.name || '').slice(0, 30) });
+        if (pt.white) {
+          validateSectionWhite(pt);
+          segment.col = [WHITE_ONLY, BLACK, BLACK];
+        }
+        segs.push(segment);
       }
     });
     if (segs.length > 32) throw new Error('This section look uses ' + segs.length + ' WLED segments; the controller limit is 32. Remove a layer or simplify the selected looks.');
@@ -252,7 +262,7 @@
     return !needsStudio || hasStudioEffects();
   }
   const sameP = (a, b) => !!a && !!b && JSON.stringify(norm(a)) === JSON.stringify(norm(b));
-  const norm = P => ({ fx: P.fx, sx: P.sx, ix: P.ix, c1: P.c1, c2: P.c2, c3: P.c3, o1: !!P.o1, o2: !!P.o2, o3: !!P.o3, pal: P.pal, col: (P.col || []).map(c => c.slice(0, 3).map(Math.round)), spc: P.spc || 0, rev: !!P.rev, mi: !!P.mi, slow: P.slow || 1, bri: Math.round(P.bri), mycol: !!P.mycol, colors: P.colors || null, blend: !!P.blend, rep: P.rep || 1, cmode: P.cmode || null, seq: P.seq || null, parts: P.parts ? P.parts.map(pt => [pt.start, pt.stop, pt.look, pt.dir || 'n', pt.speed || 1]) : null });
+  const norm = P => ({ fx: P.fx, sx: P.sx, ix: P.ix, c1: P.c1, c2: P.c2, c3: P.c3, o1: !!P.o1, o2: !!P.o2, o3: !!P.o3, pal: P.pal, col: (P.col || []).map(c => c.slice(0, 3).map(Math.round)), spc: P.spc || 0, rev: !!P.rev, mi: !!P.mi, slow: P.slow || 1, bri: Math.round(P.bri), mycol: !!P.mycol, colors: P.colors || null, blend: !!P.blend, rep: P.rep || 1, cmode: P.cmode || null, seq: P.seq || null, parts: P.parts ? P.parts.map(pt => [pt.start, pt.stop, pt.look, pt.dir || 'n', pt.speed || 1, pt.white || 0]) : null });
   // does the roof still run what we last pushed? (someone may have changed it from the WLED app)
   // does the roof run these settings? (compares the controller's live state with a look's push settings)
   function stateMatches(P, { matchBrightness = true } = {}) {
@@ -265,7 +275,11 @@
       return !!known && sameP(P, APP.lastPush.P) && (!matchBrightness || s.bri === known.bri) && segs.length === known.seg.length &&
         known.seg.every((seg, i) => segmentMatches(seg, segs[i]));
     }
-    if (isSec(P)) return segs.length === P.parts.length && P.parts.every((pt, k) => { const q = effective(partP(pt)), x = segs[k]; return x.start === pt.start && x.stop === pt.stop && x.fx === q.fx && x.sx === q.sx && x.ix === q.ix && !!x.rev === !!q.rev && !!x.mi === !!q.mi; });
+    if (isSec(P)) return segs.length === P.parts.length && P.parts.every((pt, k) => {
+      const q = effective(partP(pt)), x = segs[k];
+      if (pt.white && !segmentMatches({ col: [WHITE_ONLY] }, x)) return false;
+      return x.start === pt.start && x.stop === pt.stop && x.fx === q.fx && x.sx === q.sx && x.ix === q.ix && !!x.rev === !!q.rev && !!x.mi === !!q.mi;
+    });
     if (P.cmode === 'bulb') { const { L, segs: ss } = seqLayout(P); return segs.length === ss.length && segs.every((x, k) => x.fx === P.fx && x.sx === P.sx && x.ix === P.ix && x.start === ss[k].start && x.grp === ss[k].n && x.spc === L - ss[k].n && same(x.col[0], ss[k].c)); }
     const q = effective(P);
     if (q.cpal) { const slot = Object.keys(APP.palSlots).find(s => APP.palSlots[s].key === stopsKey(q.cpal)); if (slot === undefined || g.pal !== CPAL(+slot)) return false; }
@@ -1600,10 +1614,19 @@
 
 
   /* ======================= ▤ sections page ======================= */
-  const RUNS = (() => { let o = 0; return (layout.runs || []).slice().map((r, k) => ({ r, k })).sort((a, b) => (a.r.port - b.r.port) || (a.k - b.k)).map(({ r }) => { const x = { start: o, stop: o + r.leds, name: r.name, port: r.port }; o += r.leds; return x; }); })();
+  const RUNS = (() => { let o = 0; return (layout.runs || []).slice().map((r, k) => ({ r, k })).sort((a, b) => (a.r.port - b.r.port) || (a.k - b.k)).map(({ r }) => { const x = { start: o, stop: o + r.leds, name: r.name, port: r.port, landscape: r.landscape, rgbw: r.rgbw, manualWhite: r.manualWhite }; o += r.leds; return x; }); })();
   const SEC_COL = ['#62d682', '#4dc3ff', '#b98cff', '#4dffa6', '#ff6b9a', '#ffd36b', '#7a8cff', '#ff8a4d'];
   const SEC_SPEEDS = [[0.25, '¼×'], [0.5, '½×'], [0.75, '¾×'], [1, '1×'], [1.5, '1½×'], [2, '2×']];
   const landscapeSections = layout.landscape || [];
+  function sectionWhiteOutput(start, stop) {
+    const run = RUNS.find(r => r.rgbw && r.start <= start && stop <= r.stop);
+    if (run && (run.landscape || landscapeSections.some(section => section.start <= start && stop <= section.stop))) return run;
+  }
+  function validateSectionWhite(pt) {
+    const run = sectionWhiteOutput(pt.start, pt.stop);
+    if (!run) throw new Error('Dedicated white for “' + pt.name + '” requires a single RGBW landscape output.');
+    if (run.manualWhite === false) throw new Error('Set WLED auto white to None or Dual for output ' + run.port + ', then test and save the controller setup again.');
+  }
   const landscapeSplit = document.querySelector('[data-split="landscape"]');
   landscapeSplit.hidden = !landscapeSections.length;
   const secLooks = () => LOOKS.filter(l => !isSec(l.P));
@@ -1637,7 +1660,7 @@
     if (ranges.length > (WL.info?.leds?.maxseg || 32)) return toast('These ranges exceed the controller’s segment limit.', 'var(--warn)');
     SD.P.parts = ranges.map(([a, b, label]) => {
       const prior = old.filter(p => p.start < b && p.stop > a).sort((x, y) => (Math.min(b, y.stop) - Math.max(a, y.start)) - (Math.min(b, x.stop) - Math.max(a, x.start)))[0];
-      return { start: a, stop: b, name: label || nameFor(a, b), look: prior?.look || fallback, dir: prior?.dir || 'n', speed: prior?.speed || 1 };
+      return { start: a, stop: b, name: label || nameFor(a, b), look: prior?.look || fallback, dir: prior?.dir || 'n', speed: prior?.speed || 1, white: sectionWhiteOutput(a, b) ? (prior?.white || 0) : 0 };
     });
     resetSecView(); renderSections();
   }
@@ -1657,8 +1680,9 @@
     $('secParts').innerHTML = SD.P.parts.map((pt, k) => '<div class="part" data-k="' + k + '"><div class="bar" style="background:' + SEC_COL[k % SEC_COL.length] + '"></div><div>' +
       '<div class="ph"><b>' + esc(pt.name) + '</b>' + (SD.P.parts.length > 1 ? '<button class="x" data-del="' + k + '" title="Merge into the neighbour">×</button>' : '') + '</div>' +
       '<div class="rg">Bulbs <input type="number" data-a="' + k + '" min="1" max="' + N + '" value="' + (pt.start + 1) + '"' + (k === 0 ? ' disabled' : '') + '> to <input type="number" data-b="' + k + '" min="1" max="' + N + '" value="' + pt.stop + '"' + (k === SD.P.parts.length - 1 ? ' disabled' : '') + '> <span>(' + (pt.stop - pt.start) + ' bulbs)</span></div>' +
-      '<select data-look="' + k + '">' + opts + '</select>' +
-      '<div class="opts">' + DIRS.map(o => '<button class="chipb' + ((pt.dir || 'n') === o[0] ? ' on' : '') + '" data-pdir="' + k + ':' + o[0] + '">' + o[1] + '</button>').join('') + '<span style="width:8px"></span>' +
+      (pt.white || sectionWhiteOutput(pt.start, pt.stop) ? '<label class="rg">Dedicated white % <input type="number" data-section-white="' + k + '" min="0" max="100" step="1" value="' + (pt.white || 0) + '"><span>0 uses the selected look</span></label>' : '') +
+      '<select data-look="' + k + '" aria-label="Look for ' + esc(pt.name) + '"' + (pt.white ? ' disabled' : '') + '>' + opts + '</select>' +
+      '<div class="opts"' + (pt.white ? ' hidden' : '') + '>' + DIRS.map(o => '<button class="chipb' + ((pt.dir || 'n') === o[0] ? ' on' : '') + '" data-pdir="' + k + ':' + o[0] + '">' + o[1] + '</button>').join('') + '<span style="width:8px"></span>' +
       SEC_SPEEDS.map(([v, t]) => '<button class="chipb' + ((pt.speed || 1) === v ? ' on' : '') + '" data-psp="' + k + ':' + v + '">' + t + '</button>').join('') + '</div></div></div>').join('') +
       '<div class="sl"><span>Brightness</span><input type="range" id="secBri" min="5" max="255" value="' + SD.P.bri + '"><output>' + pct(SD.P.bri) + '</output></div>';
     $('secParts').querySelectorAll('select[data-look]').forEach(sel => sel.value = SD.P.parts[+sel.dataset.look].look);
@@ -1670,6 +1694,14 @@
   $('secParts').addEventListener('change', e => {
     const t = e.target;
     if (t.dataset.look != null) { SD.P.parts[+t.dataset.look].look = t.value; resetSecView(); return; }
+    if (t.dataset.sectionWhite != null) {
+      const pt = SD.P.parts[+t.dataset.sectionWhite], white = clamp(Math.round(Number(t.value) || 0), 0, 100);
+      if (white && !sectionWhiteOutput(pt.start, pt.stop)) {
+        t.value = pt.white || 0;
+        return toast('Set white to 0 or keep this section within a single RGBW landscape output.', 'var(--warn)');
+      }
+      pt.white = white;
+    }
     if (t.dataset.a != null) setBoundary(+t.dataset.a, +t.value - 1);
     if (t.dataset.b != null) setBoundary(+t.dataset.b + 1, +t.value);
     resetSecView(); renderSections();
@@ -1688,12 +1720,13 @@
     if (b.dataset.split !== 'add') return resplit(b.dataset.split);
     const P = SD.P.parts; if (P.length >= 32) return toast('The controller allows 32 sections', 'var(--warn)');
     let k = 0; P.forEach((x, i) => { if (x.stop - x.start > P[k].stop - P[k].start) k = i; });
-    const x = P[k], mid = Math.round((x.start + x.stop) / 2); P.splice(k + 1, 0, { start: mid, stop: x.stop, look: x.look, dir: x.dir, speed: x.speed, name: nameFor(mid, x.stop) }); x.stop = mid; x.name = nameFor(x.start, mid);
+    const x = P[k], mid = Math.round((x.start + x.stop) / 2); P.splice(k + 1, 0, { start: mid, stop: x.stop, look: x.look, dir: x.dir, speed: x.speed, white: x.white, name: nameFor(mid, x.stop) }); x.stop = mid; x.name = nameFor(x.start, mid);
     resetSecView(); renderSections();
   });
   $('secName').addEventListener('input', e => { SD.name = e.target.value; $('secTitle').textContent = SD.name; });
   function saveSection() {
-    const desc = SD.P.parts.map(pt => (BY_ID[pt.look]?.name || '?')).join(' · ');
+    for (const pt of SD.P.parts) if (pt.white) validateSectionWhite(pt);
+    const desc = SD.P.parts.map(pt => pt.white ? 'Dedicated white' : (BY_ID[pt.look]?.name || '?')).join(' · ');
     SD.P.parts.forEach(pt => { if (BY_ID[pt.look]) pt.P = clone(BY_ID[pt.look].P); });   // snapshot, used if the library look is ever deleted
     if (SD.id && APP.userLooks.find(u => u.id === SD.id)) { const u = APP.userLooks.find(u => u.id === SD.id); Object.assign(u, { name: SD.name, desc, P: clone(SD.P) }); }
     else { SD.id = 'split-' + Date.now().toString(36); APP.userLooks.unshift({ id: SD.id, name: SD.name, cats: ['mine'], desc, P: clone(SD.P) }); }
@@ -1701,8 +1734,11 @@
     history.replaceState(null, '', location.href.split('#')[0] + '#sections=' + SD.id);
     return SD.id;
   }
-  $('secSave').onclick = () => { saveSection(); toast('Saved “' + SD.name + '” to Saved looks', 'var(--accent)'); };
-  $('secPush').onclick = async () => { const id = saveSection(); try { await pushToHouse(applyMaster(BY_ID[id].P), id, BY_ID[id].P); toast(SD.name + ' is fading onto the house'); } catch (err) { toast('Push failed: ' + err.message, 'var(--warn)'); } };
+  $('secSave').onclick = () => {
+    try { saveSection(); toast('Saved “' + SD.name + '” to Saved looks', 'var(--accent)'); }
+    catch (err) { toast(err.message, 'var(--warn)'); }
+  };
+  $('secPush').onclick = async () => { try { const id = saveSection(); await pushToHouse(applyMaster(BY_ID[id].P), id, BY_ID[id].P); toast(SD.name + ' is fading onto the house'); } catch (err) { toast('Push failed: ' + err.message, 'var(--warn)'); } };
 
   /* ======================= ▶ playlists (stored + played by the controller) ======================= */
   const PS_PL = 230, PS_ITEMS = 200;   // playlist presets 230-239; the looks they play 200-229
